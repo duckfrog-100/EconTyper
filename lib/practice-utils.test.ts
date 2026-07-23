@@ -10,9 +10,9 @@ import {
 describe("segmentSentences", () => {
   it("splits English text into sentence-level practice units", () => {
     expect(segmentSentences("Markets move. Inflation matters! Does policy work?")).toEqual([
-      "Markets move.",
-      "Inflation matters!",
-      "Does policy work?",
+      { text: "Markets move.", paragraphStart: true },
+      { text: "Inflation matters!", paragraphStart: false },
+      { text: "Does policy work?", paragraphStart: false },
     ]);
   });
 
