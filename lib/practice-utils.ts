@@ -19,52 +19,38 @@ export function normalizeComparableCharacter(character: string): string {
 function splitParagraph(paragraph: string): string[] {
   const normalized = paragraph.replace(/[ \t]+/g, " ").trim();
   if (!normalized) return [];
-
   if (typeof Intl !== "undefined" && "Segmenter" in Intl) {
     const segmenter = new Intl.Segmenter("en", { granularity: "sentence" });
     return Array.from(segmenter.segment(normalized), ({ segment }) => segment.trim()).filter(Boolean);
   }
-
   return normalized.match(/[^.!?]+[.!?]+|[^.!?]+$/g)?.map((sentence) => sentence.trim()).filter(Boolean) ?? [];
 }
 
 export function segmentSentences(text: string): PracticeSentence[] {
   const normalized = text.replace(/\r\n?/g, "\n").trim();
   if (!normalized) return [];
-
-  return normalized
-    .split(/\n{2,}/)
-    .flatMap((paragraph) => splitParagraph(paragraph).map((sentence, index) => ({ text: sentence, paragraphStart: index === 0 })));
+  return normalized.split(/\n{2,}/).flatMap((paragraph) =>
+    splitParagraph(paragraph).map((sentence, index) => ({ text: sentence, paragraphStart: index === 0 })),
+  );
 }
 
 export function buildCharacterStates(target: string, typed: string): CharacterState[] {
-  return Array.from(target).map((character, index) => {
-    if (index >= typed.length) {
-      return { character, displayCharacter: character, state: "remaining" };
-    }
-
-    const typedCharacter = Array.from(typed)[index] ?? "";
+  const targetCharacters = Array.from(target);
+  const typedCharacters = Array.from(typed);
+  return targetCharacters.map((character, index) => {
+    if (index >= typedCharacters.length) return { character, displayCharacter: character, state: "remaining" };
+    const typedCharacter = typedCharacters[index] ?? "";
     const isCorrect = normalizeComparableCharacter(typedCharacter) === normalizeComparableCharacter(character);
-
-    return {
-      character,
-      displayCharacter: isCorrect ? character : typedCharacter,
-      state: isCorrect ? "correct" : "incorrect",
-    };
+    return { character, displayCharacter: isCorrect ? character : typedCharacter, state: isCorrect ? "correct" : "incorrect" };
   });
 }
 
 export function calculateAccuracy(target: string, typed: string): number {
-  if (!typed.length) return 100;
-  const targetCharacters = Array.from(target);
   const typedCharacters = Array.from(typed);
+  if (!typedCharacters.length) return 100;
+  const targetCharacters = Array.from(target);
   const correct = typedCharacters.reduce(
-    (count, character, index) =>
-      count +
-      (index < targetCharacters.length &&
-      normalizeComparableCharacter(targetCharacters[index]) === normalizeComparableCharacter(character)
-        ? 1
-        : 0),
+    (count, character, index) => count + (index < targetCharacters.length && normalizeComparableCharacter(targetCharacters[index]) === normalizeComparableCharacter(character) ? 1 : 0),
     0,
   );
   return Math.round((correct / typedCharacters.length) * 100);
@@ -74,7 +60,5 @@ export function isTypingComplete(target: string, typed: string): boolean {
   const targetCharacters = Array.from(target);
   const typedCharacters = Array.from(typed);
   if (targetCharacters.length !== typedCharacters.length) return false;
-  return targetCharacters.every(
-    (character, index) => normalizeComparableCharacter(character) === normalizeComparableCharacter(typedCharacters[index]),
-  );
+  return targetCharacters.every((character, index) => normalizeComparableCharacter(character) === normalizeComparableCharacter(typedCharacters[index]));
 }
