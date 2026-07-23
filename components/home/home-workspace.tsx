@@ -9,7 +9,16 @@ import type { PracticeArticle } from "@/types/article";
 
 function startPractice(article: PracticeArticle, push: (href: string) => void) {
   saveCurrentArticle(article);
-  push("/practice");
+  push(`/practice?session=${encodeURIComponent(article.id)}`);
+}
+
+function normalizePastedText(text: string): string {
+  return text
+    .replace(/\r\n?/g, "\n")
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.replace(/[ \t\n]+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 export function HomeWorkspace() {
@@ -37,21 +46,21 @@ export function HomeWorkspace() {
 
   function handlePaste() {
     setError("");
-    const text = pasteText.replace(/\s+/g, " ").trim();
+    const text = normalizePastedText(pasteText);
     if (text.length < 80) {
       setError("Paste at least 80 characters to begin practice.");
       return;
     }
-    startPractice(
-      {
-        id: crypto.randomUUID(),
-        title: pasteTitle.trim() || "Pasted article",
-        sourceName: "Pasted text",
-        text,
-        createdAt: new Date().toISOString(),
-      },
-      router.push,
-    );
+
+    const article: PracticeArticle = {
+      id: crypto.randomUUID(),
+      title: pasteTitle.trim() || "Pasted article",
+      sourceName: "Pasted text",
+      text,
+      createdAt: new Date().toISOString(),
+    };
+
+    startPractice(article, router.push);
   }
 
   return (
