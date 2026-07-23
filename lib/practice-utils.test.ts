@@ -33,9 +33,16 @@ describe("tolerant typing comparison", () => {
     expect(normalizeComparableCharacter("\u00a0")).toBe(" ");
   });
 
-  it("marks only real spelling differences as incorrect", () => {
+  it("shows the actual mistyped character while retaining the target character", () => {
+    expect(buildCharacterStates("market", "marx")[3]).toEqual({
+      character: "k",
+      displayCharacter: "x",
+      state: "incorrect",
+    });
+  });
+
+  it("marks equivalent characters as correct", () => {
     expect(buildCharacterStates("He’s Here", "he's here").every(({ state }) => state === "correct")).toBe(true);
-    expect(buildCharacterStates("market", "marx")[3]).toEqual({ character: "k", state: "incorrect" });
   });
 
   it("calculates completion and accuracy using tolerant comparison", () => {
