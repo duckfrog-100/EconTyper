@@ -1,3 +1,4 @@
+import type { LookupAddress } from "node:dns";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 
@@ -71,7 +72,7 @@ export async function assertPublicUrl(input: string): Promise<URL> {
     return url;
   }
 
-  let answers: Awaited<ReturnType<typeof lookup>>;
+  let answers: LookupAddress[];
   try {
     answers = await lookup(hostname, { all: true, verbatim: true });
   } catch {
