@@ -1,5 +1,6 @@
 export type CharacterState = {
   character: string;
+  displayCharacter: string;
   state: "correct" | "incorrect" | "remaining";
 };
 
@@ -38,31 +39,42 @@ export function segmentSentences(text: string): PracticeSentence[] {
 
 export function buildCharacterStates(target: string, typed: string): CharacterState[] {
   return Array.from(target).map((character, index) => {
-    if (index >= typed.length) return { character, state: "remaining" };
+    if (index >= typed.length) {
+      return { character, displayCharacter: character, state: "remaining" };
+    }
+
+    const typedCharacter = Array.from(typed)[index] ?? "";
+    const isCorrect = normalizeComparableCharacter(typedCharacter) === normalizeComparableCharacter(character);
+
     return {
       character,
-      state:
-        normalizeComparableCharacter(typed[index]) === normalizeComparableCharacter(character)
-          ? "correct"
-          : "incorrect",
+      displayCharacter: isCorrect ? character : typedCharacter,
+      state: isCorrect ? "correct" : "incorrect",
     };
   });
 }
 
 export function calculateAccuracy(target: string, typed: string): number {
   if (!typed.length) return 100;
-  const correct = Array.from(typed).reduce(
+  const targetCharacters = Array.from(target);
+  const typedCharacters = Array.from(typed);
+  const correct = typedCharacters.reduce(
     (count, character, index) =>
       count +
-      (index < target.length && normalizeComparableCharacter(target[index]) === normalizeComparableCharacter(character) ? 1 : 0),
+      (index < targetCharacters.length &&
+      normalizeComparableCharacter(targetCharacters[index]) === normalizeComparableCharacter(character)
+        ? 1
+        : 0),
     0,
   );
-  return Math.round((correct / typed.length) * 100);
+  return Math.round((correct / typedCharacters.length) * 100);
 }
 
 export function isTypingComplete(target: string, typed: string): boolean {
-  if (target.length !== typed.length) return false;
-  return Array.from(target).every(
-    (character, index) => normalizeComparableCharacter(character) === normalizeComparableCharacter(typed[index]),
+  const targetCharacters = Array.from(target);
+  const typedCharacters = Array.from(typed);
+  if (targetCharacters.length !== typedCharacters.length) return false;
+  return targetCharacters.every(
+    (character, index) => normalizeComparableCharacter(character) === normalizeComparableCharacter(typedCharacters[index]),
   );
 }
