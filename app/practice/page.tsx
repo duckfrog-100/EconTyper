@@ -19,6 +19,10 @@ import type { PracticeArticle } from "@/types/article";
 
 const SETTINGS_KEY = "econtyper.typingSettings";
 
+type PracticePageProps = {
+  searchParams: { session?: string };
+};
+
 function InteractiveSentence({ sentence, muted = false, style }: { sentence: string; muted?: boolean; style?: React.CSSProperties }) {
   return (
     <p className={`${muted ? "text-zinc-400 dark:text-zinc-600" : "text-zinc-700 dark:text-zinc-300"}`} style={style}>
@@ -39,7 +43,8 @@ function loadSettings(): TypingSettingsValue {
   }
 }
 
-export default function PracticePage() {
+export default function PracticePage({ searchParams }: PracticePageProps) {
+  const sessionId = searchParams.session ?? "";
   const [article, setArticle] = useState<PracticeArticle | null | undefined>(undefined);
   const [sentenceIndex, setSentenceIndex] = useState(0);
   const [typed, setTyped] = useState("");
@@ -48,9 +53,12 @@ export default function PracticePage() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    setArticle(getCurrentArticle());
+    const storedArticle = getCurrentArticle();
+    setArticle(storedArticle && (!sessionId || storedArticle.id === sessionId) ? storedArticle : null);
+    setSentenceIndex(0);
+    setTyped("");
     setSettings(loadSettings());
-  }, []);
+  }, [sessionId]);
 
   useEffect(() => {
     try {
@@ -80,9 +88,9 @@ export default function PracticePage() {
   }
 
   function renderTypingCharacters() {
-    return characterStates.map(({ character, state }, index) => (
+    return characterStates.map(({ character, displayCharacter, state }, index) => (
       <span key={`${character}-${index}`}>
-        {index === typed.length && <span aria-hidden="true" className="typing-caret" />}
+        {index === Array.from(typed).length && <span aria-hidden="true" className="typing-caret" />}
         <span
           className={
             state === "correct"
@@ -92,7 +100,7 @@ export default function PracticePage() {
                 : "text-zinc-300 dark:text-zinc-700"
           }
         >
-          {character}
+          {displayCharacter}
         </span>
       </span>
     ));
@@ -107,7 +115,7 @@ export default function PracticePage() {
       <main className="mx-auto flex min-h-screen max-w-xl flex-col justify-center px-5 py-16 text-center">
         <p className="text-sm font-semibold uppercase tracking-widest text-zinc-500">No active session</p>
         <h1 className="mt-3 text-3xl font-semibold">Choose an article first.</h1>
-        <p className="mt-4 text-zinc-600 dark:text-zinc-400">Practice content belongs only to the tab where you started it.</p>
+        <p className="mt-4 text-zinc-600 dark:text-zinc-400">Practice content belongs only to the tab and session where you started it.</p>
         <Link href="/" className="mx-auto mt-7 rounded-2xl bg-zinc-950 px-5 py-3 font-medium text-white dark:bg-zinc-100 dark:text-zinc-950">Return home</Link>
       </main>
     );
@@ -126,7 +134,7 @@ export default function PracticePage() {
         <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-sm text-zinc-500">
           <span>Sentence {Math.min(sentenceIndex + 1, sentences.length)} / {sentences.length}</span>
           <span>Accuracy {accuracy}%</span>
-          <span>{typed.length} / {sentence.length} characters</span>
+          <span>{Array.from(typed).length} / {Array.from(sentence).length} characters</span>
         </div>
       </header>
 
@@ -154,8 +162,8 @@ export default function PracticePage() {
         >
           <p aria-hidden="true" className="whitespace-pre-wrap break-words" style={textStyle}>
             {renderTypingCharacters()}
-            {typed.length === sentence.length && <span aria-hidden="true" className="typing-caret" />}
-            {typed.length > sentence.length && <span className="rounded-sm bg-red-100 text-red-600 dark:bg-red-950/60 dark:text-red-400">{typed.slice(sentence.length)}</span>}
+            {Array.from(typed).length === Array.from(sentence).length && <span aria-hidden="true" className="typing-caret" />}
+            {Array.from(typed).length > Array.from(sentence).length && <span className="rounded-sm bg-red-100 text-red-600 dark:bg-red-950/60 dark:text-red-400">{Array.from(typed).slice(Array.from(sentence).length).join("")}</span>}
           </p>
           <textarea
             ref={inputRef}
@@ -173,7 +181,7 @@ export default function PracticePage() {
 
         <div className="mt-5 flex items-center justify-between gap-3">
           <button type="button" disabled={sentenceIndex === 0} onClick={() => moveToSentence(sentenceIndex - 1)} className="rounded-xl border border-zinc-300 px-4 py-2 text-sm font-medium disabled:opacity-30 dark:border-zinc-700">Previous</button>
-          <p className={`text-center text-sm font-medium ${isComplete ? "text-emerald-600" : "text-zinc-500"}`}>{isComplete ? "Sentence complete" : "Case and smart quote differences are accepted"}</p>
+          <p className={`text-center text-sm font-medium ${isComplete ? "text-emerald-600" : "text-zinc-500"}`}>{isComplete ? "Sentence complete" : "Red letters show what you actually typed"}</p>
           <button type="button" disabled={!isComplete || sentenceIndex >= sentences.length - 1} onClick={() => moveToSentence(sentenceIndex + 1)} className="rounded-xl bg-zinc-950 px-4 py-2 text-sm font-medium text-white disabled:opacity-30 dark:bg-zinc-100 dark:text-zinc-950">Next</button>
         </div>
       </section>
