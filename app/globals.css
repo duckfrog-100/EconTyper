@@ -27,6 +27,25 @@ textarea {
   font: inherit;
 }
 
+@keyframes typing-caret-blink {
+  0%, 48% { opacity: 1; }
+  49%, 100% { opacity: 0; }
+}
+
+.typing-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.15em;
+  margin: 0 1px;
+  vertical-align: -0.15em;
+  background: #10b981;
+  animation: typing-caret-blink 1s steps(1, end) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .typing-caret { animation: none; }
+}
+
 @media (prefers-color-scheme: dark) {
   html,
   body {
