@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { extractArticle } from "@/app/actions/extract-article";
 import { saveCurrentArticle } from "@/lib/session-storage";
@@ -18,21 +18,25 @@ export function HomeWorkspace() {
   const [pasteTitle, setPasteTitle] = useState("");
   const [pasteText, setPasteText] = useState("");
   const [error, setError] = useState("");
-  const [isPending, startTransition] = useTransition();
+  const [isExtracting, setIsExtracting] = useState(false);
 
-  function handleExtract() {
+  async function handleExtract() {
     setError("");
-    startTransition(async () => {
+    setIsExtracting(true);
+    try {
       const result = await extractArticle(url);
       if (!result.ok) {
         setError(result.message);
         return;
       }
       startPractice(result.article, router.push);
-    });
+    } finally {
+      setIsExtracting(false);
+    }
   }
 
   function handlePaste() {
+    setError("");
     const text = pasteText.replace(/\s+/g, " ").trim();
     if (text.length < 80) {
       setError("Paste at least 80 characters to begin practice.");
@@ -63,7 +67,7 @@ export function HomeWorkspace() {
           <div className="mb-5"><p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">From a URL</p><h2 className="mt-2 text-xl font-semibold">Extract a news article</h2></div>
           <label className="sr-only" htmlFor="article-url">Article URL</label>
           <input id="article-url" type="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://example.com/economy/article" className="w-full rounded-2xl border border-zinc-300 bg-transparent px-4 py-3 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 dark:border-zinc-700" />
-          <button type="button" onClick={handleExtract} disabled={!url.trim() || isPending} className="mt-4 w-full rounded-2xl bg-zinc-950 px-4 py-3 font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white">{isPending ? "Extracting…" : "Extract article"}</button>
+          <button type="button" onClick={handleExtract} disabled={!url.trim() || isExtracting} className="mt-4 w-full rounded-2xl bg-zinc-950 px-4 py-3 font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white">{isExtracting ? "Extracting…" : "Extract article"}</button>
         </div>
 
         <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
