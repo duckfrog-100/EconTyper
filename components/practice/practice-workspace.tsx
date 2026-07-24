@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DictionaryWord } from "@/components/practice/dictionary-word";
+import { SentenceTranslation } from "@/components/practice/sentence-translation";
 import { DEFAULT_TYPING_SETTINGS, TypingSettings, type TypingSettingsValue } from "@/components/practice/typing-settings";
 import { buildCharacterStates, calculateAccuracy, isTypingComplete, segmentSentences } from "@/lib/practice-utils";
 import { getCurrentArticle } from "@/lib/session-storage";
 import type { PracticeArticle } from "@/types/article";
 
-const SETTINGS_KEY = "econtyper.typingSettings";
+const SETTINGS_KEY = "chagok.typingSettings";
 
 function isNumberInRange(value: unknown, min: number, max: number): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= min && value <= max;
@@ -16,7 +17,7 @@ function isNumberInRange(value: unknown, min: number, max: number): value is num
 
 function loadSettings(): TypingSettingsValue {
   try {
-    const raw = sessionStorage.getItem(SETTINGS_KEY);
+    const raw = sessionStorage.getItem(SETTINGS_KEY) ?? sessionStorage.getItem("econtyper.typingSettings");
     if (!raw) return DEFAULT_TYPING_SETTINGS;
     const parsed = JSON.parse(raw) as Partial<TypingSettingsValue>;
     return {
@@ -24,7 +25,7 @@ function loadSettings(): TypingSettingsValue {
       fontWeight: isNumberInRange(parsed.fontWeight, 300, 700) ? parsed.fontWeight : DEFAULT_TYPING_SETTINGS.fontWeight,
       lineHeight: isNumberInRange(parsed.lineHeight, 1.3, 2.2) ? parsed.lineHeight : DEFAULT_TYPING_SETTINGS.lineHeight,
       fontFamily: parsed.fontFamily === "serif" || parsed.fontFamily === "sans" ? parsed.fontFamily : DEFAULT_TYPING_SETTINGS.fontFamily,
-      contextMode: parsed.contextMode === "single" || parsed.contextMode === "three" ? parsed.contextMode : DEFAULT_TYPING_SETTINGS.contextMode,
+      showTranslations: typeof parsed.showTranslations === "boolean" ? parsed.showTranslations : DEFAULT_TYPING_SETTINGS.showTranslations,
     };
   } catch {
     return DEFAULT_TYPING_SETTINGS;
@@ -114,9 +115,18 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
 
   return (
     <main className="mx-auto w-full max-w-5xl px-5 py-8 sm:px-8 sm:py-12">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <Link href="/" className="text-sm text-zinc-500 hover:text-zinc-950 dark:hover:text-zinc-100">← 홈</Link>
-        <button type="button" onClick={() => setSettingsOpen(true)} className="rounded-xl border border-zinc-200 px-4 py-2 text-xs font-semibold tracking-wider dark:border-zinc-800">타이핑 설정 ⚙</button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setSettings((current) => ({ ...current, showTranslations: !current.showTranslations }))}
+            className={`rounded-xl border px-4 py-2 text-xs font-semibold transition ${settings.showTranslations ? "border-emerald-500 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300" : "border-zinc-200 text-zinc-600 dark:border-zinc-800 dark:text-zinc-300"}`}
+          >
+            {settings.showTranslations ? "전체 해석 끄기" : "전체 해석 켜기"}
+          </button>
+          <button type="button" onClick={() => setSettingsOpen(true)} className="rounded-xl border border-zinc-200 px-4 py-2 text-xs font-semibold tracking-wider dark:border-zinc-800">필사 설정 ⚙</button>
+        </div>
       </div>
 
       <header className="mt-7 border-b border-zinc-200 pb-7 dark:border-zinc-800">
@@ -153,6 +163,7 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
               <div className="mt-5">
                 <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">원문 · 단어에 마우스를 올리면 뜻 보기 · 더블클릭하면 복사</p>
                 <InteractiveSentence sentence={sentence.text} style={textStyle} />
+                <SentenceTranslation sentence={sentence.text} showAll={settings.showTranslations} />
               </div>
 
               <div
