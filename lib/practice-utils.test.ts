@@ -23,6 +23,21 @@ describe("segmentSentences", () => {
       { text: "Another sentence.", paragraphStart: false },
     ]);
   });
+
+  it("repairs missing spaces between sentence punctuation and uppercase text", () => {
+    expect(segmentSentences("Public safety matters.Congress introduced a bill.They debated it.")).toEqual([
+      { text: "Public safety matters.", paragraphStart: true },
+      { text: "Congress introduced a bill.", paragraphStart: false },
+      { text: "They debated it.", paragraphStart: false },
+    ]);
+  });
+
+  it("does not split a single-letter abbreviation", () => {
+    expect(segmentSentences("The U.S. economy grew. Markets reacted.")).toEqual([
+      { text: "The U.S. economy grew.", paragraphStart: true },
+      { text: "Markets reacted.", paragraphStart: false },
+    ]);
+  });
 });
 
 describe("tolerant typing comparison", () => {
