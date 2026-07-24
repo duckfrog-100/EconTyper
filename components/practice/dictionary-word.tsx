@@ -7,7 +7,7 @@ type DictionaryPayload = Meaning & { word: string };
 
 const memoryCache = new Map<string, Meaning>();
 const pendingRequests = new Map<string, Promise<Meaning>>();
-const CACHE_PREFIX = "econtyper.dictionary.";
+const CACHE_PREFIX = "chagok.dictionary.";
 
 function normalizeWord(word: string): string {
   return word.toLowerCase().replace(/[^a-z'-]/g, "");
@@ -44,7 +44,7 @@ function cacheMeaning(word: string, meaning: Meaning) {
 
 function fetchMeaning(word: string): Promise<Meaning> {
   const normalized = normalizeWord(word);
-  if (!normalized) return Promise.reject(new Error("Invalid word"));
+  if (!normalized) return Promise.reject(new Error("올바른 영어 단어가 아닙니다."));
 
   const cached = readCachedMeaning(normalized);
   if (cached) return Promise.resolve(cached);
@@ -76,38 +76,48 @@ export function DictionaryWord({ word }: { word: string }) {
   const [visible, setVisible] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState<"idle" | "copied" | "copy-error">("idle");
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
+  const loadingRef = useRef(false);
+  const normalized = normalizeWord(word);
 
-  useEffect(() => () => {
-    mountedRef.current = false;
-    if (timerRef.current) clearTimeout(timerRef.current);
-  }, []);
+  useEffect(() => {
+    mountedRef.current = true;
+    const cached = readCachedMeaning(normalized);
+    if (cached) setMeaning(cached);
+
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [normalized]);
 
   function beginLookup() {
     setVisible(true);
     setError("");
-    if (meaning || timerRef.current) return;
 
-    timerRef.current = setTimeout(async () => {
-      timerRef.current = null;
-      try {
-        const next = await fetchMeaning(word);
+    const cached = readCachedMeaning(normalized);
+    if (cached) {
+      setMeaning(cached);
+      return;
+    }
+    if (meaning || loadingRef.current) return;
+
+    loadingRef.current = true;
+    void fetchMeaning(word)
+      .then((next) => {
         if (mountedRef.current) setMeaning(next);
-      } catch (lookupError) {
+      })
+      .catch((lookupError: unknown) => {
         if (mountedRef.current) {
           setError(lookupError instanceof Error ? lookupError.message : "단어 뜻을 불러오지 못했습니다.");
         }
-      }
-    }, 120);
+      })
+      .finally(() => {
+        loadingRef.current = false;
+      });
   }
 
   function handleLeave() {
     setVisible(false);
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
   }
 
   async function handleDoubleClick() {
@@ -117,7 +127,7 @@ export function DictionaryWord({ word }: { word: string }) {
     try {
       const nextMeaning = meaning ?? await fetchMeaning(word);
       if (mountedRef.current) setMeaning(nextMeaning);
-      await navigator.clipboard.writeText(`${normalizeWord(word)} — ${nextMeaning.korean || nextMeaning.english}`);
+      await navigator.clipboard.writeText(`${normalized} — ${nextMeaning.korean || nextMeaning.english}`);
       if (mountedRef.current) setStatus("copied");
     } catch {
       if (mountedRef.current) setStatus("copy-error");
@@ -144,7 +154,7 @@ export function DictionaryWord({ word }: { word: string }) {
 
       {visible && (
         <span className="absolute bottom-full left-1/2 z-30 mb-2 w-72 max-w-[80vw] -translate-x-1/2 rounded-xl border border-zinc-200 bg-white p-4 text-left text-xs leading-5 text-zinc-700 shadow-xl dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
-          <strong className="block text-sm text-zinc-950 dark:text-zinc-50">{normalizeWord(word)}</strong>
+          <strong className="block text-sm text-zinc-950 dark:text-zinc-50">{normalized}</strong>
           {!meaning && !error && <span className="mt-2 block">뜻을 찾는 중…</span>}
           {error && <span className="mt-2 block text-red-600 dark:text-red-400">{error}</span>}
           {meaning?.korean && <span className="mt-2 block text-sm font-semibold text-zinc-950 dark:text-zinc-50">{meaning.korean}</span>}
