@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { DictionaryWord } from "@/components/practice/dictionary-word";
 import { SentenceTranslation } from "@/components/practice/sentence-translation";
 import { DEFAULT_TYPING_SETTINGS, TypingSettings, type TypingSettingsValue } from "@/components/practice/typing-settings";
+import { useSpeechSynthesis } from "@/hooks/use-speech-synthesis";
 import { buildCharacterStates, calculateAccuracy, isTypingComplete, segmentSentences } from "@/lib/practice-utils";
 import { getCurrentArticle } from "@/lib/session-storage";
 import type { PracticeArticle } from "@/types/article";
@@ -26,6 +27,10 @@ function loadSettings(): TypingSettingsValue {
       lineHeight: isNumberInRange(parsed.lineHeight, 1.3, 2.2) ? parsed.lineHeight : DEFAULT_TYPING_SETTINGS.lineHeight,
       fontFamily: parsed.fontFamily === "serif" || parsed.fontFamily === "sans" ? parsed.fontFamily : DEFAULT_TYPING_SETTINGS.fontFamily,
       showTranslations: typeof parsed.showTranslations === "boolean" ? parsed.showTranslations : DEFAULT_TYPING_SETTINGS.showTranslations,
+      speechLocale: parsed.speechLocale === "en-GB" ? "en-GB" : "en-US",
+      speechRate: isNumberInRange(parsed.speechRate, 0.5, 1.5) ? parsed.speechRate : DEFAULT_TYPING_SETTINGS.speechRate,
+      dictationMode: typeof parsed.dictationMode === "boolean" ? parsed.dictationMode : DEFAULT_TYPING_SETTINGS.dictationMode,
+      autoPlayNext: typeof parsed.autoPlayNext === "boolean" ? parsed.autoPlayNext : DEFAULT_TYPING_SETTINGS.autoPlayNext,
     };
   } catch {
     return DEFAULT_TYPING_SETTINGS;
@@ -47,19 +52,23 @@ function InteractiveSentence({ sentence, style }: { sentence: string; style: Rea
 export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
   const [article, setArticle] = useState<PracticeArticle | null | undefined>(undefined);
   const [typedBySentence, setTypedBySentence] = useState<Record<number, string>>({});
+  const [revealedBySentence, setRevealedBySentence] = useState<Record<number, boolean>>({});
   const [activeIndex, setActiveIndex] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settings, setSettings] = useState<TypingSettingsValue>(DEFAULT_TYPING_SETTINGS);
   const inputRefs = useRef<Array<HTMLTextAreaElement | null>>([]);
   const cardRefs = useRef<Array<HTMLElement | null>>([]);
+  const { supported: speechSupported, speakingIndex, speak, stop } = useSpeechSynthesis();
 
   useEffect(() => {
     const storedArticle = getCurrentArticle();
     setArticle(sessionId && storedArticle?.id === sessionId ? storedArticle : null);
     setTypedBySentence({});
+    setRevealedBySentence({});
     setActiveIndex(0);
     setSettings(loadSettings());
-  }, [sessionId]);
+    stop();
+  }, [sessionId, stop]);
 
   useEffect(() => {
     try {
@@ -91,11 +100,45 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
     window.setTimeout(() => inputRefs.current[index]?.focus(), 0);
   }
 
+  function playSentence(index: number) {
+    const sentence = sentences[index];
+    if (!sentence || !speechSupported) return;
+
+    if (speakingIndex === index) {
+      stop();
+      return;
+    }
+
+    activateSentence(index);
+    speak({
+      index,
+      text: sentence.text,
+      locale: settings.speechLocale,
+      rate: settings.speechRate,
+    });
+  }
+
   function updateTyped(index: number, value: string) {
-    setTypedBySentence((current) => ({
-      ...current,
-      [index]: value.replace(/\r?\n/g, " "),
-    }));
+    const normalized = value.replace(/\r?\n/g, " ");
+    const wasComplete = isTypingComplete(sentences[index]?.text ?? "", typedBySentence[index] ?? "");
+    const nowComplete = isTypingComplete(sentences[index]?.text ?? "", normalized);
+
+    setTypedBySentence((current) => ({ ...current, [index]: normalized }));
+
+    if (!wasComplete && nowComplete && index < sentences.length - 1) {
+      const nextIndex = index + 1;
+      window.setTimeout(() => {
+        activateSentence(nextIndex, true);
+        if (settings.autoPlayNext && speechSupported) {
+          speak({
+            index: nextIndex,
+            text: sentences[nextIndex].text,
+            locale: settings.speechLocale,
+            rate: settings.speechRate,
+          });
+        }
+      }, 180);
+    }
   }
 
   if (article === undefined) {
@@ -117,12 +160,11 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
     <main className="mx-auto w-full max-w-5xl px-5 py-8 sm:px-8 sm:py-12">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Link href="/" className="text-sm text-zinc-500 hover:text-zinc-950 dark:hover:text-zinc-100">← 홈</Link>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setSettings((current) => ({ ...current, showTranslations: !current.showTranslations }))}
-            className={`rounded-xl border px-4 py-2 text-xs font-semibold transition ${settings.showTranslations ? "border-emerald-500 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300" : "border-zinc-200 text-zinc-600 dark:border-zinc-800 dark:text-zinc-300"}`}
-          >
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <button type="button" onClick={() => setSettings((current) => ({ ...current, dictationMode: !current.dictationMode }))} className={`rounded-xl border px-4 py-2 text-xs font-semibold transition ${settings.dictationMode ? "border-violet-500 bg-violet-50 text-violet-700 dark:bg-violet-950/30 dark:text-violet-300" : "border-zinc-200 text-zinc-600 dark:border-zinc-800 dark:text-zinc-300"}`}>
+            {settings.dictationMode ? "듣고 쓰기 종료" : "듣고 쓰기"}
+          </button>
+          <button type="button" onClick={() => setSettings((current) => ({ ...current, showTranslations: !current.showTranslations }))} className={`rounded-xl border px-4 py-2 text-xs font-semibold transition ${settings.showTranslations ? "border-emerald-500 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300" : "border-zinc-200 text-zinc-600 dark:border-zinc-800 dark:text-zinc-300"}`}>
             {settings.showTranslations ? "전체 해석 끄기" : "전체 해석 켜기"}
           </button>
           <button type="button" onClick={() => setSettingsOpen(true)} className="rounded-xl border border-zinc-200 px-4 py-2 text-xs font-semibold tracking-wider dark:border-zinc-800">필사 설정 ⚙</button>
@@ -136,7 +178,9 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
           <span>완료 {completedCount} / {sentences.length}문장</span>
           <span>입력 {totalTyped.toLocaleString()}자</span>
           <span>현재 {Math.min(activeIndex + 1, sentences.length)}번째 문장</span>
+          <span>{settings.speechLocale === "en-US" ? "미국 영어" : "영국 영어"} · {settings.speechRate.toFixed(1)}×</span>
         </div>
+        {!speechSupported && <p className="mt-3 text-sm text-red-600">이 브라우저에서는 음성 재생 기능을 지원하지 않습니다.</p>}
       </header>
 
       <div className="mt-8 space-y-8">
@@ -148,80 +192,53 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
           const complete = isTypingComplete(sentence.text, typed);
           const accuracy = calculateAccuracy(sentence.text, typed);
           const active = activeIndex === index;
+          const originalVisible = !settings.dictationMode || revealedBySentence[index] || complete;
 
           return (
-            <section
-              key={`${sentence.text}-${index}`}
-              ref={(element) => { cardRefs.current[index] = element; }}
-              className={`${sentence.paragraphStart && index > 0 ? "mt-16" : ""} rounded-3xl border bg-white p-5 shadow-sm transition dark:bg-zinc-900 sm:p-8 ${active ? "border-emerald-500 ring-4 ring-emerald-500/10" : "border-zinc-200 dark:border-zinc-800"}`}
-            >
-              <div className="flex items-center justify-between gap-3 text-xs text-zinc-500">
+            <section key={`${sentence.text}-${index}`} ref={(element) => { cardRefs.current[index] = element; }} className={`${sentence.paragraphStart && index > 0 ? "mt-16" : ""} rounded-3xl border bg-white p-5 shadow-sm transition dark:bg-zinc-900 sm:p-8 ${active ? "border-emerald-500 ring-4 ring-emerald-500/10" : "border-zinc-200 dark:border-zinc-800"}`}>
+              <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-zinc-500">
                 <span>{index + 1}번째 문장</span>
-                <span>{complete ? "완료" : typed ? `정확도 ${accuracy}%` : "대기"}</span>
+                <div className="flex items-center gap-2">
+                  <button type="button" disabled={!speechSupported} onClick={() => playSentence(index)} className={`rounded-lg border px-3 py-1.5 font-semibold transition disabled:opacity-40 ${speakingIndex === index ? "border-emerald-500 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30" : "border-zinc-200 dark:border-zinc-700"}`}>
+                    {speakingIndex === index ? "■ 정지" : "▶ 문장 듣기"}
+                  </button>
+                  <span>{complete ? "완료" : typed ? `정확도 ${accuracy}%` : "대기"}</span>
+                </div>
               </div>
 
               <div className="mt-5">
-                <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">원문 · 단어에 마우스를 올리면 뜻 보기 · 더블클릭하면 복사</p>
-                <InteractiveSentence sentence={sentence.text} style={textStyle} />
-                <SentenceTranslation sentence={sentence.text} showAll={settings.showTranslations} />
+                {originalVisible ? (
+                  <>
+                    <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">원문 · 단어에 마우스를 올리면 뜻 보기 · 더블클릭하면 복사</p>
+                    <InteractiveSentence sentence={sentence.text} style={textStyle} />
+                    <SentenceTranslation sentence={sentence.text} showAll={settings.showTranslations} />
+                  </>
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-violet-300 bg-violet-50/60 px-5 py-8 text-center dark:border-violet-800 dark:bg-violet-950/20">
+                    <p className="text-sm font-semibold text-violet-700 dark:text-violet-300">원문이 가려져 있습니다. 문장을 듣고 입력해 보세요.</p>
+                    <button type="button" onClick={() => setRevealedBySentence((current) => ({ ...current, [index]: true }))} className="mt-3 text-xs font-semibold text-zinc-500 underline underline-offset-4">원문 잠시 보기</button>
+                  </div>
+                )}
               </div>
 
-              <div
-                role="textbox"
-                tabIndex={0}
-                onClick={() => activateSentence(index)}
-                onFocus={() => activateSentence(index)}
-                className="relative mt-6 min-h-36 cursor-text rounded-2xl border border-zinc-200 bg-zinc-50 p-5 outline-none dark:border-zinc-700 dark:bg-zinc-950 sm:p-6"
-              >
+              <div role="textbox" tabIndex={0} onClick={() => activateSentence(index)} onFocus={() => activateSentence(index)} className="relative mt-6 min-h-36 cursor-text rounded-2xl border border-zinc-200 bg-zinc-50 p-5 outline-none dark:border-zinc-700 dark:bg-zinc-950 sm:p-6">
                 <p aria-hidden="true" className="whitespace-pre-wrap break-words" style={textStyle}>
                   {states.map(({ character, displayCharacter, state }, characterIndex) => (
                     <span key={`${character}-${characterIndex}`}>
                       {active && characterIndex === typedCharacters.length && <span className="typing-caret" />}
-                      <span className={state === "correct"
-                        ? "text-zinc-950 dark:text-zinc-50"
-                        : state === "incorrect"
-                          ? "rounded-sm bg-red-100 text-red-600 dark:bg-red-950/60 dark:text-red-400"
-                          : "text-zinc-300 dark:text-zinc-700"}
-                      >
-                        {displayCharacter}
-                      </span>
+                      <span className={state === "correct" ? "text-zinc-950 dark:text-zinc-50" : state === "incorrect" ? "rounded-sm bg-red-100 text-red-600 dark:bg-red-950/60 dark:text-red-400" : "text-zinc-300 dark:text-zinc-700"}>{displayCharacter}</span>
                     </span>
                   ))}
                   {active && typedCharacters.length === targetCharacters.length && <span className="typing-caret" />}
-                  {typedCharacters.length > targetCharacters.length && (
-                    <span className="rounded-sm bg-red-100 text-red-600 dark:bg-red-950/60 dark:text-red-400">
-                      {typedCharacters.slice(targetCharacters.length).join("")}
-                    </span>
-                  )}
+                  {typedCharacters.length > targetCharacters.length && <span className="rounded-sm bg-red-100 text-red-600 dark:bg-red-950/60 dark:text-red-400">{typedCharacters.slice(targetCharacters.length).join("")}</span>}
                 </p>
 
-                <textarea
-                  ref={(element) => { inputRefs.current[index] = element; }}
-                  value={typed}
-                  onChange={(event) => updateTyped(index, event.target.value)}
-                  onFocus={() => setActiveIndex(index)}
-                  onPaste={(event) => event.preventDefault()}
-                  spellCheck={false}
-                  autoCorrect="off"
-                  autoCapitalize="off"
-                  aria-label={`${index + 1}번째 문장 입력`}
-                  className="absolute inset-0 h-full w-full resize-none opacity-0"
-                />
+                <textarea ref={(element) => { inputRefs.current[index] = element; }} value={typed} onChange={(event) => updateTyped(index, event.target.value)} onFocus={() => setActiveIndex(index)} onPaste={(event) => event.preventDefault()} spellCheck={false} autoCorrect="off" autoCapitalize="off" aria-label={`${index + 1}번째 문장 입력`} className="absolute inset-0 h-full w-full resize-none opacity-0" />
               </div>
 
               <div className="mt-4 flex items-center justify-between gap-3">
-                <p className={`text-sm font-medium ${complete ? "text-emerald-600" : "text-zinc-500"}`}>
-                  {complete ? "문장을 정확히 입력했습니다." : "입력한 글자가 다르면 빨간색으로 표시됩니다."}
-                </p>
-                {index < sentences.length - 1 && (
-                  <button
-                    type="button"
-                    onClick={() => activateSentence(index + 1, true)}
-                    className="shrink-0 rounded-xl border border-zinc-300 px-4 py-2 text-sm font-medium dark:border-zinc-700"
-                  >
-                    다음 문장 ↓
-                  </button>
-                )}
+                <p className={`text-sm font-medium ${complete ? "text-emerald-600" : "text-zinc-500"}`}>{complete ? "문장을 정확히 입력했습니다." : "입력한 글자가 다르면 빨간색으로 표시됩니다."}</p>
+                {index < sentences.length - 1 && <button type="button" onClick={() => activateSentence(index + 1, true)} className="shrink-0 rounded-xl border border-zinc-300 px-4 py-2 text-sm font-medium dark:border-zinc-700">다음 문장 ↓</button>}
               </div>
             </section>
           );
