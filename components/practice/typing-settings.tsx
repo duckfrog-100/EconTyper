@@ -5,7 +5,7 @@ export type TypingSettingsValue = {
   fontWeight: number;
   fontFamily: "sans" | "serif";
   lineHeight: number;
-  contextMode: "single" | "three";
+  showTranslations: boolean;
 };
 
 export const DEFAULT_TYPING_SETTINGS: TypingSettingsValue = {
@@ -13,7 +13,7 @@ export const DEFAULT_TYPING_SETTINGS: TypingSettingsValue = {
   fontWeight: 500,
   fontFamily: "sans",
   lineHeight: 1.7,
-  contextMode: "single",
+  showTranslations: false,
 };
 
 type Props = {
@@ -45,7 +45,25 @@ export function TypingSettings({ open, value, onChange, onClose }: Props) {
           <button type="button" onClick={onClose} aria-label="설정 닫기" className="rounded-lg border border-zinc-200 px-3 py-2 text-lg dark:border-zinc-800">×</button>
           <button type="button" onClick={() => onChange(DEFAULT_TYPING_SETTINGS)} className="text-xs font-semibold tracking-wider">초기화</button>
         </div>
-        <h2 className="mt-10 text-lg font-semibold">타이핑 설정</h2>
+        <h2 className="mt-10 text-lg font-semibold">필사 설정</h2>
+
+        <div className="mt-7 border-y border-zinc-200 py-5 dark:border-zinc-800">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-semibold">전체 문장 해석 보기</p>
+              <p className="mt-1 text-xs leading-5 text-zinc-500">모든 문장 카드에서 한국어 해석을 표시합니다.</p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={value.showTranslations}
+              onClick={() => onChange({ ...value, showTranslations: !value.showTranslations })}
+              className={`relative h-7 w-12 shrink-0 rounded-full transition ${value.showTranslations ? "bg-emerald-500" : "bg-zinc-300 dark:bg-zinc-700"}`}
+            >
+              <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition ${value.showTranslations ? "left-6" : "left-1"}`} />
+            </button>
+          </div>
+        </div>
 
         <Stepper label="글자 크기" value={value.fontSize} min={18} max={36} step={1} onChange={(fontSize) => onChange({ ...value, fontSize })} />
         <Stepper label="글자 굵기" value={value.fontWeight} min={300} max={700} step={100} onChange={(fontWeight) => onChange({ ...value, fontWeight })} />
