@@ -1,0 +1,60 @@
+import type { PracticeHistoryMonthGroup } from "@/types/history";
+
+type HistoryListProps = {
+  groups: PracticeHistoryMonthGroup[];
+};
+
+function formatMonth(monthKey: string): string {
+  const [year, month] = monthKey.split("-").map(Number);
+  return `${year}년 ${month}월`;
+}
+
+function formatLocalDateTime(value: string): string {
+  return new Intl.DateTimeFormat("ko-KR", {
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+export function HistoryList({ groups }: HistoryListProps) {
+  if (groups.length === 0) {
+    return (
+      <section className="mt-8 rounded-3xl border border-dashed border-zinc-300 px-6 py-16 text-center dark:border-zinc-700">
+        <h2 className="text-xl font-semibold">아직 학습 기록이 없습니다.</h2>
+        <p className="mt-3 text-sm leading-6 text-zinc-500">글 하나를 끝까지 필사하면 이 페이지에 결과가 저장됩니다.</p>
+      </section>
+    );
+  }
+
+  return (
+    <div className="mt-10 space-y-12">
+      {groups.map((group) => (
+        <section key={group.monthKey}>
+          <h2 className="text-xl font-semibold tracking-tight">{formatMonth(group.monthKey)}</h2>
+          <div className="mt-4 space-y-4">
+            {group.entries.map((entry) => (
+              <article key={entry.id} className="rounded-3xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:p-6">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    {entry.sourceName && <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">{entry.sourceName}</p>}
+                    <h3 className="mt-1 text-lg font-semibold text-zinc-950 dark:text-zinc-50">{entry.title}</h3>
+                    <p className="mt-2 text-sm text-zinc-500">{formatLocalDateTime(entry.completedAt)}</p>
+                  </div>
+                  <p className="text-2xl font-semibold text-emerald-700 dark:text-emerald-400">{Math.round(entry.accuracy)}%</p>
+                </div>
+                <dl className="mt-5 grid grid-cols-2 gap-3 border-t border-zinc-200 pt-5 text-sm dark:border-zinc-800 sm:grid-cols-4">
+                  <div><dt className="text-zinc-500">완료 문장</dt><dd className="mt-1 font-semibold">{entry.sentenceCount.toLocaleString()}개</dd></div>
+                  <div><dt className="text-zinc-500">입력 글자</dt><dd className="mt-1 font-semibold">{entry.typedCharacters.toLocaleString()}자</dd></div>
+                  <div><dt className="text-zinc-500">실수 문장</dt><dd className="mt-1 font-semibold">{entry.wrongSentenceCount.toLocaleString()}개</dd></div>
+                  <div><dt className="text-zinc-500">학습 단어</dt><dd className="mt-1 font-semibold">{entry.sessionWordCount.toLocaleString()}개</dd></div>
+                </dl>
+              </article>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
