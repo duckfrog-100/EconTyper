@@ -7,7 +7,14 @@ import { SentenceTranslation } from "@/components/practice/sentence-translation"
 import { DEFAULT_TYPING_SETTINGS, TypingSettings, type TypingSettingsValue } from "@/components/practice/typing-settings";
 import { VocabularyDrawer } from "@/components/practice/vocabulary-drawer";
 import { useSpeechSynthesis } from "@/hooks/use-speech-synthesis";
-import { buildCharacterStates, calculateAccuracy, isTypingComplete, segmentSentences } from "@/lib/practice-utils";
+import {
+  buildCharacterStates,
+  calculateAccuracy,
+  calculateAggregateAccuracy,
+  hasIncorrectCharacter,
+  isTypingComplete,
+  segmentSentences,
+} from "@/lib/practice-utils";
 import { getCurrentArticle } from "@/lib/session-storage";
 import {
   normalizeWord,
@@ -78,6 +85,7 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
   const [article, setArticle] = useState<PracticeArticle | null | undefined>(undefined);
   const [typedBySentence, setTypedBySentence] = useState<Record<number, string>>({});
   const [revealedBySentence, setRevealedBySentence] = useState<Record<number, boolean>>({});
+  const [wrongAttemptIndices, setWrongAttemptIndices] = useState<Set<number>>(new Set());
   const [activeIndex, setActiveIndex] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [vocabularyOpen, setVocabularyOpen] = useState(false);
@@ -93,6 +101,7 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
     setArticle(sessionId && storedArticle?.id === sessionId ? storedArticle : null);
     setTypedBySentence({});
     setRevealedBySentence({});
+    setWrongAttemptIndices(new Set());
     setActiveIndex(0);
     setSettings(loadSettings());
     setSessionWords(readSessionWords(sessionId));
@@ -124,6 +133,10 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
     0,
   );
   const totalTyped = Object.values(typedBySentence).reduce((sum, value) => sum + Array.from(value).length, 0);
+  const aggregateAccuracy = calculateAggregateAccuracy(
+    sentences.map((sentence) => sentence.text),
+    sentences.map((_, index) => typedBySentence[index] ?? ""),
+  );
 
   function storeSessionWords(next: SavedWord[]) {
     setSessionWords(next);
@@ -188,8 +201,18 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
 
   function updateTyped(index: number, value: string) {
     const normalized = value.replace(/\r?\n/g, " ");
-    const wasComplete = isTypingComplete(sentences[index]?.text ?? "", typedBySentence[index] ?? "");
-    const nowComplete = isTypingComplete(sentences[index]?.text ?? "", normalized);
+    const target = sentences[index]?.text ?? "";
+    const wasComplete = isTypingComplete(target, typedBySentence[index] ?? "");
+    const nowComplete = isTypingComplete(target, normalized);
+
+    if (hasIncorrectCharacter(target, normalized)) {
+      setWrongAttemptIndices((current) => {
+        if (current.has(index)) return current;
+        const next = new Set(current);
+        next.add(index);
+        return next;
+      });
+    }
 
     setTypedBySentence((current) => ({ ...current, [index]: normalized }));
 
@@ -248,6 +271,8 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
         <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-sm text-zinc-500">
           <span>완료 {completedCount} / {sentences.length}문장</span>
           <span>입력 {totalTyped.toLocaleString()}자</span>
+          <span>전체 정확도 {aggregateAccuracy}%</span>
+          <span>실수 기록 {wrongAttemptIndices.size}문장</span>
           <span>현재 {Math.min(activeIndex + 1, sentences.length)}번째 문장</span>
           <span>{settings.speechLocale === "en-US" ? "미국 영어" : "영국 영어"} · {settings.speechRate.toFixed(1)}×</span>
         </div>
@@ -262,6 +287,7 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
           const states = buildCharacterStates(sentence.text, typed);
           const complete = isTypingComplete(sentence.text, typed);
           const accuracy = calculateAccuracy(sentence.text, typed);
+          const hadWrongAttempt = wrongAttemptIndices.has(index);
           const active = activeIndex === index;
           const originalVisible = !settings.dictationMode || revealedBySentence[index] || complete;
 
@@ -270,6 +296,7 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
               <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-zinc-500">
                 <span>{index + 1}번째 문장</span>
                 <div className="flex items-center gap-2">
+                  {hadWrongAttempt && <span className="rounded-full bg-amber-100 px-2 py-1 font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">실수 기록</span>}
                   <button type="button" disabled={!speechSupported} onClick={() => playSentence(index)} className={`rounded-lg border px-3 py-1.5 font-semibold transition disabled:opacity-40 ${speakingIndex === index ? "border-emerald-500 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30" : "border-zinc-200 dark:border-zinc-700"}`}>
                     {speakingIndex === index ? "■ 정지" : "▶ 문장 듣기"}
                   </button>
