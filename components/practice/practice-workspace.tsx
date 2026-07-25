@@ -5,10 +5,20 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { DictionaryWord } from "@/components/practice/dictionary-word";
 import { SentenceTranslation } from "@/components/practice/sentence-translation";
 import { DEFAULT_TYPING_SETTINGS, TypingSettings, type TypingSettingsValue } from "@/components/practice/typing-settings";
+import { VocabularyDrawer } from "@/components/practice/vocabulary-drawer";
 import { useSpeechSynthesis } from "@/hooks/use-speech-synthesis";
 import { buildCharacterStates, calculateAccuracy, isTypingComplete, segmentSentences } from "@/lib/practice-utils";
 import { getCurrentArticle } from "@/lib/session-storage";
+import {
+  normalizeWord,
+  readSavedWords,
+  readSessionWords,
+  upsertWord,
+  writeSavedWords,
+  writeSessionWords,
+} from "@/lib/vocabulary-storage";
 import type { PracticeArticle } from "@/types/article";
+import type { SavedWord } from "@/types/vocabulary";
 
 const SETTINGS_KEY = "chagok.typingSettings";
 
@@ -37,12 +47,27 @@ function loadSettings(): TypingSettingsValue {
   }
 }
 
-function InteractiveSentence({ sentence, style }: { sentence: string; style: React.CSSProperties }) {
+type InteractiveSentenceProps = {
+  sentence: string;
+  sourceTitle: string;
+  style: React.CSSProperties;
+  onLookupSuccess: (word: SavedWord) => void;
+};
+
+function InteractiveSentence({ sentence, sourceTitle, style, onLookupSuccess }: InteractiveSentenceProps) {
   return (
     <p className="text-zinc-700 dark:text-zinc-300" style={style}>
       {sentence.split(/(\s+)/).map((part, index) =>
         /[A-Za-z]/.test(part)
-          ? <DictionaryWord key={`${part}-${index}`} word={part} />
+          ? (
+            <DictionaryWord
+              key={`${part}-${index}`}
+              word={part}
+              sentence={sentence}
+              sourceTitle={sourceTitle}
+              onLookupSuccess={onLookupSuccess}
+            />
+          )
           : <span key={`${part}-${index}`}>{part}</span>,
       )}
     </p>
@@ -55,7 +80,10 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
   const [revealedBySentence, setRevealedBySentence] = useState<Record<number, boolean>>({});
   const [activeIndex, setActiveIndex] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [vocabularyOpen, setVocabularyOpen] = useState(false);
   const [settings, setSettings] = useState<TypingSettingsValue>(DEFAULT_TYPING_SETTINGS);
+  const [sessionWords, setSessionWords] = useState<SavedWord[]>([]);
+  const [savedWords, setSavedWords] = useState<SavedWord[]>([]);
   const inputRefs = useRef<Array<HTMLTextAreaElement | null>>([]);
   const cardRefs = useRef<Array<HTMLElement | null>>([]);
   const { supported: speechSupported, speakingIndex, speak, stop } = useSpeechSynthesis();
@@ -67,6 +95,9 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
     setRevealedBySentence({});
     setActiveIndex(0);
     setSettings(loadSettings());
+    setSessionWords(readSessionWords(sessionId));
+    setSavedWords(readSavedWords());
+    setVocabularyOpen(false);
     stop();
   }, [sessionId, stop]);
 
@@ -93,6 +124,43 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
     0,
   );
   const totalTyped = Object.values(typedBySentence).reduce((sum, value) => sum + Array.from(value).length, 0);
+
+  function storeSessionWords(next: SavedWord[]) {
+    setSessionWords(next);
+    writeSessionWords(sessionId, next);
+  }
+
+  function storeSavedWords(next: SavedWord[]) {
+    setSavedWords(next);
+    writeSavedWords(next);
+  }
+
+  function handleLookupSuccess(word: SavedWord) {
+    setSessionWords((current) => {
+      const next = upsertWord(current, word);
+      writeSessionWords(sessionId, next);
+      return next;
+    });
+  }
+
+  function handleToggleSaved(word: SavedWord) {
+    const normalized = normalizeWord(word.word);
+    const exists = savedWords.some((savedWord) => normalizeWord(savedWord.word) === normalized);
+    const next = exists
+      ? savedWords.filter((savedWord) => normalizeWord(savedWord.word) !== normalized)
+      : upsertWord(savedWords, word);
+    storeSavedWords(next);
+  }
+
+  function handleDeleteSessionWord(word: SavedWord) {
+    const normalized = normalizeWord(word.word);
+    storeSessionWords(sessionWords.filter((sessionWord) => normalizeWord(sessionWord.word) !== normalized));
+  }
+
+  function handleImportCsv(importedWords: SavedWord[]) {
+    const next = importedWords.reduce((words, word) => upsertWord(words, word), savedWords);
+    storeSavedWords(next);
+  }
 
   function activateSentence(index: number, scroll = false) {
     setActiveIndex(index);
@@ -161,6 +229,9 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Link href="/" className="text-sm text-zinc-500 hover:text-zinc-950 dark:hover:text-zinc-100">← 홈</Link>
         <div className="flex flex-wrap items-center justify-end gap-2">
+          <button type="button" onClick={() => setVocabularyOpen(true)} className="rounded-xl border border-zinc-200 px-4 py-2 text-xs font-semibold dark:border-zinc-800">
+            단어장 ({sessionWords.length})
+          </button>
           <button type="button" onClick={() => setSettings((current) => ({ ...current, dictationMode: !current.dictationMode }))} className={`rounded-xl border px-4 py-2 text-xs font-semibold transition ${settings.dictationMode ? "border-violet-500 bg-violet-50 text-violet-700 dark:bg-violet-950/30 dark:text-violet-300" : "border-zinc-200 text-zinc-600 dark:border-zinc-800 dark:text-zinc-300"}`}>
             {settings.dictationMode ? "듣고 쓰기 종료" : "듣고 쓰기"}
           </button>
@@ -210,7 +281,7 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
                 {originalVisible ? (
                   <>
                     <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">원문 · 단어에 마우스를 올리면 뜻 보기 · 더블클릭하면 복사</p>
-                    <InteractiveSentence sentence={sentence.text} style={textStyle} />
+                    <InteractiveSentence sentence={sentence.text} sourceTitle={article.title} style={textStyle} onLookupSuccess={handleLookupSuccess} />
                     <SentenceTranslation sentence={sentence.text} showAll={settings.showTranslations} />
                   </>
                 ) : (
@@ -246,6 +317,16 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
       </div>
 
       <section aria-label="광고" className="mt-12 flex min-h-24 items-center justify-center rounded-2xl border border-dashed border-zinc-300 px-4 text-center text-xs text-zinc-500 dark:border-zinc-700">향후 광고가 표시될 영역입니다.</section>
+      <VocabularyDrawer
+        open={vocabularyOpen}
+        sessionWords={sessionWords}
+        savedWords={savedWords}
+        onClose={() => setVocabularyOpen(false)}
+        onToggleSaved={handleToggleSaved}
+        onDeleteSessionWord={handleDeleteSessionWord}
+        onClearSessionWords={() => storeSessionWords([])}
+        onImportCsv={handleImportCsv}
+      />
       <TypingSettings open={settingsOpen} value={settings} onChange={setSettings} onClose={() => setSettingsOpen(false)} />
     </main>
   );
