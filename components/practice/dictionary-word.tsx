@@ -102,10 +102,7 @@ export function DictionaryWord({ word, sentence, sourceTitle, onLookupSuccess }:
     mountedRef.current = true;
     emittedRef.current = false;
     const cached = readCachedMeaning(normalized);
-    if (cached) {
-      setMeaning(cached);
-      emitLookup(cached);
-    }
+    if (cached) setMeaning(cached);
 
     return () => {
       mountedRef.current = false;
@@ -122,7 +119,11 @@ export function DictionaryWord({ word, sentence, sourceTitle, onLookupSuccess }:
       emitLookup(cached);
       return;
     }
-    if (meaning || loadingRef.current) return;
+    if (meaning) {
+      emitLookup(meaning);
+      return;
+    }
+    if (loadingRef.current) return;
 
     loadingRef.current = true;
     void fetchMeaning(word)
