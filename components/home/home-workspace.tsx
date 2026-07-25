@@ -1,11 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { extractArticle } from "@/app/actions/extract-article";
+import { HistorySummary } from "@/components/history/history-summary";
+import { RecentHistory } from "@/components/history/recent-history";
+import { calculatePracticeHistorySummary, readPracticeHistory } from "@/lib/history-storage";
 import { saveCurrentArticle } from "@/lib/session-storage";
 import { starterLibrary } from "@/lib/starter-library";
+import { readSavedWords } from "@/lib/vocabulary-storage";
 import type { PracticeArticle } from "@/types/article";
+import type { PracticeHistoryEntry } from "@/types/history";
 
 function startPractice(article: PracticeArticle, push: (href: string) => void) {
   saveCurrentArticle(article);
@@ -28,6 +33,18 @@ export function HomeWorkspace() {
   const [pasteText, setPasteText] = useState("");
   const [error, setError] = useState("");
   const [isExtracting, setIsExtracting] = useState(false);
+  const [history, setHistory] = useState<PracticeHistoryEntry[]>([]);
+  const [savedWordCount, setSavedWordCount] = useState(0);
+
+  useEffect(() => {
+    setHistory(readPracticeHistory());
+    setSavedWordCount(readSavedWords().length);
+  }, []);
+
+  const historySummary = useMemo(
+    () => calculatePracticeHistorySummary(history, savedWordCount),
+    [history, savedWordCount],
+  );
 
   async function handleExtract() {
     setError("");
@@ -70,6 +87,15 @@ export function HomeWorkspace() {
         <h1 className="text-4xl font-semibold tracking-tight text-zinc-950 dark:text-zinc-50 sm:text-6xl">영어를 한 문장씩,<br />실력을 차곡차곡.</h1>
         <p className="mt-5 max-w-xl text-base leading-7 text-zinc-600 dark:text-zinc-400">뉴스, 에세이, 업무 문서 등 원하는 영어 글을 가져와 문장별로 필사하고 한국어 해석과 단어 뜻을 확인해 보세요. 연습 내용은 현재 브라우저 탭에만 유지됩니다.</p>
       </header>
+
+      <section aria-labelledby="learning-summary-title" className="mb-14">
+        <div className="mb-5">
+          <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">나의 학습</p>
+          <h2 id="learning-summary-title" className="mt-2 text-2xl font-semibold">조금씩 쌓이는 영어 습관</h2>
+        </div>
+        <HistorySummary summary={historySummary} compact />
+        <RecentHistory entries={history} />
+      </section>
 
       <section className="grid gap-6 lg:grid-cols-2">
         <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
