@@ -89,6 +89,35 @@ export function calculateAccuracy(target: string, typed: string): number {
   return Math.round((correct / typedCharacters.length) * 100);
 }
 
+export function hasIncorrectCharacter(target: string, typed: string): boolean {
+  const targetCharacters = Array.from(target);
+  return Array.from(typed).some(
+    (character, index) => index >= targetCharacters.length || normalizeComparableCharacter(character) !== normalizeComparableCharacter(targetCharacters[index]),
+  );
+}
+
+export function calculateAggregateAccuracy(targets: string[], typedValues: string[]): number {
+  let totalTyped = 0;
+  let totalCorrect = 0;
+
+  targets.forEach((target, targetIndex) => {
+    const targetCharacters = Array.from(target);
+    const typedCharacters = Array.from(typedValues[targetIndex] ?? "");
+    totalTyped += typedCharacters.length;
+    totalCorrect += typedCharacters.reduce(
+      (count, character, index) => count + (
+        index < targetCharacters.length &&
+        normalizeComparableCharacter(character) === normalizeComparableCharacter(targetCharacters[index])
+          ? 1
+          : 0
+      ),
+      0,
+    );
+  });
+
+  return totalTyped === 0 ? 100 : Math.round((totalCorrect / totalTyped) * 100);
+}
+
 export function isTypingComplete(target: string, typed: string): boolean {
   const targetCharacters = Array.from(target);
   const typedCharacters = Array.from(typed);
