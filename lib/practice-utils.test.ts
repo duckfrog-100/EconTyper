@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildCharacterStates,
   calculateAccuracy,
+  calculateAggregateAccuracy,
+  hasIncorrectCharacter,
   isTypingComplete,
   normalizeComparableCharacter,
   segmentSentences,
@@ -63,5 +65,16 @@ describe("tolerant typing comparison", () => {
   it("calculates completion and accuracy using tolerant comparison", () => {
     expect(isTypingComplete("“Inflation”", '"inflation"')).toBe(true);
     expect(calculateAccuracy("He’s Here", "he's here")).toBe(100);
+  });
+
+  it("detects an incorrect attempt before completion", () => {
+    expect(hasIncorrectCharacter("cat", "cb")).toBe(true);
+    expect(hasIncorrectCharacter("cat", "ca")).toBe(false);
+    expect(hasIncorrectCharacter("cat", "cats")).toBe(true);
+  });
+
+  it("calculates aggregate accuracy by all typed characters", () => {
+    expect(calculateAggregateAccuracy(["cat", "dog"], ["cat", "dig"])).toBe(83);
+    expect(calculateAggregateAccuracy(["cat"], [""])).toBe(100);
   });
 });
