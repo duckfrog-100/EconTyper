@@ -4,11 +4,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DictionaryWord } from "@/components/practice/dictionary-word";
-import { PracticeSummary } from "@/components/practice/practice-summary";
+import { PracticeResult } from "@/components/practice/practice-result";
 import { SentenceTranslation } from "@/components/practice/sentence-translation";
 import { DEFAULT_TYPING_SETTINGS, TypingSettings, type TypingSettingsValue } from "@/components/practice/typing-settings";
 import { VocabularyDrawer } from "@/components/practice/vocabulary-drawer";
 import { useSpeechSynthesis } from "@/hooks/use-speech-synthesis";
+import { addPracticeHistoryEntry } from "@/lib/history-storage";
+import { buildPracticeHistoryEntry } from "@/lib/practice-history-entry";
 import {
   buildCharacterStates,
   calculateAccuracy,
@@ -92,6 +94,7 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
   const [savedWords, setSavedWords] = useState<SavedWord[]>([]);
   const inputRefs = useRef<Array<HTMLTextAreaElement | null>>([]);
   const cardRefs = useRef<Array<HTMLElement | null>>([]);
+  const savedCompletionRef = useRef<string | null>(null);
   const { supported: speechSupported, speakingIndex, speak, stop } = useSpeechSynthesis();
 
   useEffect(() => {
@@ -106,6 +109,7 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
     setSessionWords(readSessionWords(sessionId));
     setSavedWords(readSavedWords());
     setVocabularyOpen(false);
+    savedCompletionRef.current = null;
     stop();
   }, [sessionId, stop]);
 
@@ -137,8 +141,25 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
   const allComplete = sentences.length > 0 && completedCount === sentences.length;
 
   useEffect(() => {
-    if (allComplete) setSummaryOpen(true);
-  }, [allComplete]);
+    if (!allComplete || !article) return;
+
+    const completionKey = `${sessionId}:${completedCount}:${sentences.length}`;
+    if (savedCompletionRef.current === completionKey) return;
+    savedCompletionRef.current = completionKey;
+
+    addPracticeHistoryEntry(buildPracticeHistoryEntry({
+      id: crypto.randomUUID(),
+      article,
+      completedAt: new Date().toISOString(),
+      accuracy: aggregateAccuracy,
+      typedCharacters: totalTyped,
+      wrongSentenceCount: wrongAttemptIndices.size,
+      sessionWordCount: sessionWords.length,
+      savedWordCount: savedWords.length,
+      sentenceCount: sentences.length,
+    }));
+    setSummaryOpen(true);
+  }, [aggregateAccuracy, allComplete, article, completedCount, savedWords.length, sentences.length, sessionId, sessionWords.length, totalTyped, wrongAttemptIndices.size]);
 
   function storeSessionWords(next: SavedWord[]) {
     setSessionWords(next);
@@ -258,7 +279,7 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
 
   if (summaryOpen) {
     return (
-      <PracticeSummary
+      <PracticeResult
         sourceName={article.sourceName}
         title={article.title}
         completedCount={completedCount}
