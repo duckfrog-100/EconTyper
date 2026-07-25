@@ -1,17 +1,22 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { normalizeWord } from "@/lib/vocabulary-storage";
+import type { SavedWord } from "@/types/vocabulary";
 
 type Meaning = { english: string; korean?: string };
 type DictionaryPayload = Meaning & { word: string };
 
+type DictionaryWordProps = {
+  word: string;
+  sentence?: string;
+  sourceTitle?: string;
+  onLookupSuccess?: (word: SavedWord) => void;
+};
+
 const memoryCache = new Map<string, Meaning>();
 const pendingRequests = new Map<string, Promise<Meaning>>();
 const CACHE_PREFIX = "chagok.dictionary.";
-
-function normalizeWord(word: string): string {
-  return word.toLowerCase().replace(/[^a-z'-]/g, "");
-}
 
 function readCachedMeaning(word: string): Meaning | null {
   const memory = memoryCache.get(word);
@@ -71,19 +76,36 @@ function fetchMeaning(word: string): Promise<Meaning> {
   return request;
 }
 
-export function DictionaryWord({ word }: { word: string }) {
+export function DictionaryWord({ word, sentence, sourceTitle, onLookupSuccess }: DictionaryWordProps) {
   const [meaning, setMeaning] = useState<Meaning | null>(null);
   const [visible, setVisible] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState<"idle" | "copied" | "copy-error">("idle");
   const mountedRef = useRef(true);
   const loadingRef = useRef(false);
+  const emittedRef = useRef(false);
   const normalized = normalizeWord(word);
+
+  function emitLookup(next: Meaning) {
+    if (emittedRef.current || !normalized || !onLookupSuccess) return;
+    emittedRef.current = true;
+    onLookupSuccess({
+      word: normalized,
+      meaning: next.korean || next.english,
+      exampleSentence: sentence,
+      sourceTitle,
+      addedAt: Date.now(),
+    });
+  }
 
   useEffect(() => {
     mountedRef.current = true;
+    emittedRef.current = false;
     const cached = readCachedMeaning(normalized);
-    if (cached) setMeaning(cached);
+    if (cached) {
+      setMeaning(cached);
+      emitLookup(cached);
+    }
 
     return () => {
       mountedRef.current = false;
@@ -97,6 +119,7 @@ export function DictionaryWord({ word }: { word: string }) {
     const cached = readCachedMeaning(normalized);
     if (cached) {
       setMeaning(cached);
+      emitLookup(cached);
       return;
     }
     if (meaning || loadingRef.current) return;
@@ -104,7 +127,10 @@ export function DictionaryWord({ word }: { word: string }) {
     loadingRef.current = true;
     void fetchMeaning(word)
       .then((next) => {
-        if (mountedRef.current) setMeaning(next);
+        if (mountedRef.current) {
+          setMeaning(next);
+          emitLookup(next);
+        }
       })
       .catch((lookupError: unknown) => {
         if (mountedRef.current) {
@@ -126,7 +152,10 @@ export function DictionaryWord({ word }: { word: string }) {
 
     try {
       const nextMeaning = meaning ?? await fetchMeaning(word);
-      if (mountedRef.current) setMeaning(nextMeaning);
+      if (mountedRef.current) {
+        setMeaning(nextMeaning);
+        emitLookup(nextMeaning);
+      }
       await navigator.clipboard.writeText(`${normalized} — ${nextMeaning.korean || nextMeaning.english}`);
       if (mountedRef.current) setStatus("copied");
     } catch {
