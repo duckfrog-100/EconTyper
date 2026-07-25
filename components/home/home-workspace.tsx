@@ -97,7 +97,7 @@ export function HomeWorkspace() {
         <RecentHistory entries={history} />
       </section>
 
-      <section className="grid gap-6 lg:grid-cols-2">
+      <section id="practice-start" className="grid scroll-mt-6 gap-6 lg:grid-cols-2">
         <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
           <div className="mb-5"><p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">URL에서 가져오기</p><h2 className="mt-2 text-xl font-semibold">영어 글 가져오기</h2></div>
           <label className="sr-only" htmlFor="article-url">영어 글 URL</label>
