@@ -1,5 +1,8 @@
 "use client";
 
+import { useEffect } from "react";
+import { addPracticeHistoryEntry } from "@/lib/history-storage";
+import { getCurrentArticle } from "@/lib/session-storage";
 import type { SavedWord } from "@/types/vocabulary";
 
 type PracticeSummaryProps = {
@@ -32,6 +35,27 @@ export function PracticeSummary({
   onReturnHome,
 }: PracticeSummaryProps) {
   const recentWords = [...sessionWords].sort((a, b) => b.addedAt - a.addedAt);
+
+  useEffect(() => {
+    if (totalSentences === 0 || completedCount !== totalSentences) return;
+
+    const article = getCurrentArticle();
+    if (!article) return;
+
+    addPracticeHistoryEntry({
+      id: `completion:${article.id}`,
+      articleId: article.id,
+      title,
+      sourceName,
+      completedAt: new Date().toISOString(),
+      accuracy,
+      typedCharacters: totalTyped,
+      wrongSentenceCount: wrongCount,
+      sessionWordCount: sessionWords.length,
+      savedWordCount: savedWordsCount,
+      sentenceCount: totalSentences,
+    });
+  }, [accuracy, completedCount, savedWordsCount, sessionWords.length, sourceName, title, totalSentences, totalTyped, wrongCount]);
 
   return (
     <main className="mx-auto min-h-screen w-full max-w-4xl px-5 py-10 sm:px-8 sm:py-16">
