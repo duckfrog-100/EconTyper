@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { PracticeHistoryMonthGroup } from "@/types/history";
 
 type HistoryListProps = {
@@ -21,9 +22,12 @@ function formatLocalDateTime(value: string): string {
 export function HistoryList({ groups }: HistoryListProps) {
   if (groups.length === 0) {
     return (
-      <section className="mt-8 rounded-3xl border border-dashed border-zinc-300 px-6 py-16 text-center dark:border-zinc-700">
+      <section className="mt-8 rounded-3xl border border-dashed border-zinc-300 px-5 py-14 text-center dark:border-zinc-700 sm:px-6 sm:py-16">
         <h2 className="text-xl font-semibold">아직 학습 기록이 없습니다.</h2>
-        <p className="mt-3 text-sm leading-6 text-zinc-500">글 하나를 끝까지 필사하면 이 페이지에 결과가 저장됩니다.</p>
+        <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-zinc-500">글 하나를 끝까지 필사하면 이 페이지에 결과가 저장됩니다.</p>
+        <Link href="/#practice-start" className="mt-6 inline-flex min-h-11 items-center rounded-xl bg-zinc-950 px-5 text-sm font-semibold text-white dark:bg-zinc-100 dark:text-zinc-950">
+          첫 필사 시작하기
+        </Link>
       </section>
     );
   }
@@ -36,15 +40,18 @@ export function HistoryList({ groups }: HistoryListProps) {
           <div className="mt-4 space-y-4">
             {group.entries.map((entry) => (
               <article key={entry.id} className="rounded-3xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:p-6">
-                <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
                   <div className="min-w-0">
                     {entry.sourceName && <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">{entry.sourceName}</p>}
-                    <h3 className="mt-1 text-lg font-semibold text-zinc-950 dark:text-zinc-50">{entry.title}</h3>
+                    <h3 className="mt-1 break-words text-lg font-semibold text-zinc-950 dark:text-zinc-50">{entry.title}</h3>
                     <p className="mt-2 text-sm text-zinc-500">{formatLocalDateTime(entry.completedAt)}</p>
                   </div>
-                  <p className="text-2xl font-semibold text-emerald-700 dark:text-emerald-400">{Math.round(entry.accuracy)}%</p>
+                  <p className="shrink-0 text-2xl font-semibold text-emerald-700 dark:text-emerald-400">
+                    <span className="mr-1 text-xs font-medium text-zinc-500 sm:hidden">정확도</span>
+                    {Math.round(entry.accuracy)}%
+                  </p>
                 </div>
-                <dl className="mt-5 grid grid-cols-2 gap-3 border-t border-zinc-200 pt-5 text-sm dark:border-zinc-800 sm:grid-cols-4">
+                <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-4 border-t border-zinc-200 pt-5 text-sm dark:border-zinc-800 sm:grid-cols-4">
                   <div><dt className="text-zinc-500">완료 문장</dt><dd className="mt-1 font-semibold">{entry.sentenceCount.toLocaleString()}개</dd></div>
                   <div><dt className="text-zinc-500">입력 글자</dt><dd className="mt-1 font-semibold">{entry.typedCharacters.toLocaleString()}자</dd></div>
                   <div><dt className="text-zinc-500">실수 문장</dt><dd className="mt-1 font-semibold">{entry.wrongSentenceCount.toLocaleString()}개</dd></div>
