@@ -3,6 +3,7 @@ import {
   buildCharacterStates,
   calculateAccuracy,
   calculateAggregateAccuracy,
+  calculateWordsPerMinute,
   hasIncorrectCharacter,
   isTypingComplete,
   normalizeComparableCharacter,
@@ -76,5 +77,22 @@ describe("tolerant typing comparison", () => {
   it("calculates aggregate accuracy by all typed characters", () => {
     expect(calculateAggregateAccuracy(["cat", "dog"], ["cat", "dig"])).toBe(83);
     expect(calculateAggregateAccuracy(["cat"], [""])).toBe(100);
+  });
+});
+
+describe("calculateWordsPerMinute", () => {
+  it("uses five typed characters as one standard word", () => {
+    expect(calculateWordsPerMinute(300, 120)).toBe(30);
+  });
+
+  it("rounds fractional WPM to the nearest whole number", () => {
+    expect(calculateWordsPerMinute(137, 90)).toBe(18);
+  });
+
+  it("returns zero for non-positive or non-finite inputs", () => {
+    expect(calculateWordsPerMinute(0, 60)).toBe(0);
+    expect(calculateWordsPerMinute(100, 0)).toBe(0);
+    expect(calculateWordsPerMinute(-10, 60)).toBe(0);
+    expect(calculateWordsPerMinute(Number.NaN, 60)).toBe(0);
   });
 });
