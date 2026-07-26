@@ -118,6 +118,14 @@ export function calculateAggregateAccuracy(targets: string[], typedValues: strin
   return totalTyped === 0 ? 100 : Math.round((totalCorrect / totalTyped) * 100);
 }
 
+export function calculateWordsPerMinute(typedCharacters: number, elapsedSeconds: number): number {
+  if (!Number.isFinite(typedCharacters) || !Number.isFinite(elapsedSeconds) || typedCharacters <= 0 || elapsedSeconds <= 0) {
+    return 0;
+  }
+
+  return Math.round((typedCharacters / 5) / (elapsedSeconds / 60));
+}
+
 export function isTypingComplete(target: string, typed: string): boolean {
   const targetCharacters = Array.from(target);
   const typedCharacters = Array.from(typed);
