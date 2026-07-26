@@ -17,6 +17,17 @@ function normalizeNonNegativeInteger(value: unknown): number | null {
   return Math.max(0, Math.trunc(value));
 }
 
+function normalizeOptionalNonNegativeInteger(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  const normalized = normalizeNonNegativeInteger(value);
+  return normalized === null ? undefined : normalized;
+}
+
+function normalizeOptionalRoundedNumber(value: unknown): number | undefined {
+  if (value === undefined || typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return Math.max(0, Math.round(value));
+}
+
 function normalizeRequiredString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const normalized = value.trim();
@@ -47,6 +58,9 @@ function normalizeHistoryEntry(value: unknown): PracticeHistoryEntry | null {
   }
 
   const sourceName = normalizeRequiredString(candidate.sourceName);
+  const wordsPerMinute = normalizeOptionalRoundedNumber(candidate.wordsPerMinute);
+  const elapsedSeconds = normalizeOptionalNonNegativeInteger(candidate.elapsedSeconds);
+
   return {
     id,
     articleId,
@@ -59,6 +73,8 @@ function normalizeHistoryEntry(value: unknown): PracticeHistoryEntry | null {
     sessionWordCount,
     savedWordCount,
     sentenceCount,
+    ...(wordsPerMinute !== undefined ? { wordsPerMinute } : {}),
+    ...(elapsedSeconds !== undefined ? { elapsedSeconds } : {}),
   };
 }
 
