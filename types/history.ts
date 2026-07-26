@@ -10,6 +10,8 @@ export type PracticeHistoryEntry = {
   sessionWordCount: number;
   savedWordCount: number;
   sentenceCount: number;
+  wordsPerMinute?: number;
+  elapsedSeconds?: number;
 };
 
 export type PracticeHistorySummary = {
