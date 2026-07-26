@@ -118,6 +118,28 @@ export function addPracticeHistoryEntry(entry: PracticeHistoryEntry): PracticeHi
   return nextEntries;
 }
 
+export function deletePracticeHistoryEntry(id: string): PracticeHistoryEntry[] {
+  const normalizedId = id.trim();
+  if (!normalizedId) return readPracticeHistory();
+
+  const nextEntries = readPracticeHistory().filter((entry) => entry.id !== normalizedId);
+  writePracticeHistory(nextEntries);
+  return nextEntries;
+}
+
+export function filterPracticeHistory(
+  entries: PracticeHistoryEntry[],
+  query: string,
+): PracticeHistoryEntry[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase("ko-KR");
+  if (!normalizedQuery) return entries;
+
+  return entries.filter((entry) =>
+    entry.title.toLocaleLowerCase("ko-KR").includes(normalizedQuery) ||
+    entry.sourceName?.toLocaleLowerCase("ko-KR").includes(normalizedQuery),
+  );
+}
+
 export function calculatePracticeHistorySummary(
   entries: PracticeHistoryEntry[],
   savedWordCount: number,
