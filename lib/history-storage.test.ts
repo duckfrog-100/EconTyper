@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   addPracticeHistoryEntry,
   calculatePracticeHistorySummary,
+  deletePracticeHistoryEntry,
+  filterPracticeHistory,
   groupPracticeHistoryByMonth,
   PRACTICE_HISTORY_KEY,
   readPracticeHistory,
@@ -66,6 +68,16 @@ describe("practice history persistence", () => {
     expect(entries[0]).toMatchObject({ title: "Updated title", accuracy: 100 });
   });
 
+  it("deletes one entry and persists the remaining history", () => {
+    addPracticeHistoryEntry(createEntry({ id: "keep" }));
+    addPracticeHistoryEntry(createEntry({ id: "remove", completedAt: "2026-07-27T10:00:00.000Z" }));
+
+    const remaining = deletePracticeHistoryEntry("remove");
+
+    expect(remaining.map((entry) => entry.id)).toEqual(["keep"]);
+    expect(readPracticeHistory().map((entry) => entry.id)).toEqual(["keep"]);
+  });
+
   it("returns an empty array for malformed JSON", () => {
     window.localStorage.setItem(PRACTICE_HISTORY_KEY, "{not-json");
     expect(readPracticeHistory()).toEqual([]);
@@ -122,6 +134,18 @@ describe("practice history calculations", () => {
   it("returns zero when neither today nor yesterday has a session", () => {
     const entries = [createEntry({ completedAt: new Date(2026, 6, 20, 10).toISOString() })];
     expect(calculatePracticeHistorySummary(entries, 0, new Date(2026, 6, 26, 12)).currentStreakDays).toBe(0);
+  });
+
+  it("filters by title or source without case sensitivity", () => {
+    const entries = [
+      createEntry({ id: "markets", title: "Global Markets", sourceName: "Reuters" }),
+      createEntry({ id: "policy", title: "Central Bank Policy", sourceName: "Bloomberg" }),
+      createEntry({ id: "manual", title: "My Notes", sourceName: undefined }),
+    ];
+
+    expect(filterPracticeHistory(entries, "MARKET").map((entry) => entry.id)).toEqual(["markets"]);
+    expect(filterPracticeHistory(entries, "bloomberg").map((entry) => entry.id)).toEqual(["policy"]);
+    expect(filterPracticeHistory(entries, "  ")).toEqual(entries);
   });
 
   it("groups entries by local calendar month in newest-first order", () => {
