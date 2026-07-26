@@ -71,11 +71,23 @@ describe("practice history persistence", () => {
   it("deletes one entry and persists the remaining history", () => {
     addPracticeHistoryEntry(createEntry({ id: "keep" }));
     addPracticeHistoryEntry(createEntry({ id: "remove", completedAt: "2026-07-27T10:00:00.000Z" }));
-
     const remaining = deletePracticeHistoryEntry("remove");
-
     expect(remaining.map((entry) => entry.id)).toEqual(["keep"]);
     expect(readPracticeHistory().map((entry) => entry.id)).toEqual(["keep"]);
+  });
+
+  it("keeps old entries valid and preserves optional timing metrics", () => {
+    window.localStorage.setItem(PRACTICE_HISTORY_KEY, JSON.stringify([
+      createEntry({ id: "legacy" }),
+      createEntry({ id: "timed", wordsPerMinute: 42.8, elapsedSeconds: 324.9 }),
+    ]));
+
+    const entries = readPracticeHistory();
+    expect(entries.find((entry) => entry.id === "legacy")).not.toHaveProperty("wordsPerMinute");
+    expect(entries.find((entry) => entry.id === "timed")).toMatchObject({
+      wordsPerMinute: 43,
+      elapsedSeconds: 324,
+    });
   });
 
   it("returns an empty array for malformed JSON", () => {
@@ -142,7 +154,6 @@ describe("practice history calculations", () => {
       createEntry({ id: "policy", title: "Central Bank Policy", sourceName: "Bloomberg" }),
       createEntry({ id: "manual", title: "My Notes", sourceName: undefined }),
     ];
-
     expect(filterPracticeHistory(entries, "MARKET").map((entry) => entry.id)).toEqual(["markets"]);
     expect(filterPracticeHistory(entries, "bloomberg").map((entry) => entry.id)).toEqual(["policy"]);
     expect(filterPracticeHistory(entries, "  ")).toEqual(entries);
