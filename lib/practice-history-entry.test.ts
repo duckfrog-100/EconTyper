@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildPracticeHistoryEntry } from "./practice-history-entry";
 
 describe("buildPracticeHistoryEntry", () => {
-  it("builds a history entry without article body text", () => {
+  it("builds a history entry with source text snapshot", () => {
     const entry = buildPracticeHistoryEntry({
       id: "completion-1",
       article: {
@@ -19,6 +19,8 @@ describe("buildPracticeHistoryEntry", () => {
       sessionWordCount: 8,
       savedWordCount: 3,
       sentenceCount: 14,
+      wordsPerMinute: 48,
+      elapsedSeconds: 620,
     });
 
     expect(entry).toEqual({
@@ -33,8 +35,11 @@ describe("buildPracticeHistoryEntry", () => {
       sessionWordCount: 8,
       savedWordCount: 3,
       sentenceCount: 14,
+      wordsPerMinute: 48,
+      elapsedSeconds: 620,
+      sourceText: "This body must not be stored.",
     });
-    expect(entry).not.toHaveProperty("text");
+    expect(entry).toHaveProperty("sourceText");
   });
 
   it("omits an empty source name", () => {
@@ -54,8 +59,34 @@ describe("buildPracticeHistoryEntry", () => {
       sessionWordCount: 0,
       savedWordCount: 0,
       sentenceCount: 1,
+      wordsPerMinute: 0,
+      elapsedSeconds: 0,
     });
 
     expect(entry.sourceName).toBeUndefined();
+  });
+
+  it("preserves words per minute and elapsed seconds", () => {
+    const entry = buildPracticeHistoryEntry({
+      id: "completion-3",
+      article: {
+        id: "article-3",
+        title: "Timed run",
+        text: "Text",
+        createdAt: "2026-07-26T10:00:00.000Z",
+      },
+      completedAt: "2026-07-26T11:00:00.000Z",
+      accuracy: 95,
+      typedCharacters: 900,
+      wrongSentenceCount: 1,
+      sessionWordCount: 2,
+      savedWordCount: 1,
+      sentenceCount: 9,
+      wordsPerMinute: 36,
+      elapsedSeconds: 750,
+    });
+
+    expect(entry.wordsPerMinute).toBe(36);
+    expect(entry.elapsedSeconds).toBe(750);
   });
 });

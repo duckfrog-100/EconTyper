@@ -58,10 +58,33 @@ export function HistoryWorkspace() {
     };
   }
 
-  function handleRetry(articleId: string) {
-    const article = findRetryArticle(articleId);
+  function handleRetry(entryId: string) {
+    const entry = history.find((e) => e.id === entryId);
+    if (!entry) return;
+
+    // 우선 순위: sourceText → sourceUrl → starterLibrary
+    if (entry.sourceText) {
+      const retryArticle: PracticeArticle = {
+        id: crypto.randomUUID(),
+        title: `${entry.title} · 다시 연습`,
+        sourceName: entry.sourceName,
+        sourceUrl: entry.sourceUrl,
+        text: entry.sourceText,
+        createdAt: new Date().toISOString(),
+      };
+      saveCurrentArticle(retryArticle);
+      router.push(`/practice?session=${encodeURIComponent(retryArticle.id)}`);
+      return;
+    }
+
+    if (entry.sourceUrl) {
+      setNotice("URL이 저장되어 있어 다시 불러올 수 있습니다. 홈에서 URL을 입력해 주세요.");
+      return;
+    }
+
+    const article = findRetryArticle(entry.articleId);
     if (!article) {
-      setNotice("원문 본문은 학습 기록에 저장하지 않습니다. 홈에서 URL을 다시 불러오거나 글을 붙여 넣어 주세요.");
+      setNotice("이 기록은 이전 버전에서 저장되어 다시 연습할 수 없습니다. 홈에서 새 글을 가져와 주세요.");
       return;
     }
 
@@ -76,21 +99,21 @@ export function HistoryWorkspace() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-5xl px-5 py-10 sm:px-8 sm:py-16">
+    <main className="mx-auto w-full max-w-4xl px-5 py-10 sm:px-8 sm:py-16">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <header>
-          <p className="text-sm font-semibold tracking-[0.18em] text-emerald-600 dark:text-emerald-400">영어필사 차곡차곡</p>
-          <h1 className="mt-3 text-4xl font-semibold tracking-tight text-zinc-950 dark:text-zinc-50 sm:text-5xl">학습 기록</h1>
+          <p className="text-sm font-semibold tracking-[0.18em] text-emerald-600 dark:text-emerald-400">영어필사차곡차곡</p>
+          <h1 className="mt-2 text-xl font-semibold tracking-tight text-zinc-950 dark:text-zinc-50">학습 기록</h1>
           <p className="mt-4 max-w-xl text-base leading-7 text-zinc-600 dark:text-zinc-400">완료한 필사와 누적 학습량을 확인해 보세요. 최근 100회 기록만 이 브라우저에 저장됩니다.</p>
         </header>
-        <Link href="/" className="rounded-xl border border-zinc-300 px-4 py-2 text-sm font-semibold dark:border-zinc-700">← 홈으로</Link>
+        <Link href="/" className="min-h-11 rounded-xl border border-zinc-300 px-4 py-2 text-sm font-semibold dark:border-zinc-700">← 홈으로</Link>
       </div>
 
       <div className="mt-10">
         <HistorySummary summary={summary} />
       </div>
 
-      <section aria-labelledby="history-search-title" className="mt-8 rounded-3xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900 sm:p-6">
+      <section aria-labelledby="history-search-title" className="mt-8 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900 sm:p-6">
         <label id="history-search-title" htmlFor="history-search" className="block text-sm font-semibold">제목 또는 출처 검색</label>
         <div className="mt-3 flex flex-col gap-2 sm:flex-row">
           <input
@@ -114,7 +137,7 @@ export function HistoryWorkspace() {
       </section>
 
       {notice && (
-        <p role="status" className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+        <p role="status" className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
           {notice}
         </p>
       )}

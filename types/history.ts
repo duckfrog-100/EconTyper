@@ -3,6 +3,8 @@ export type PracticeHistoryEntry = {
   articleId: string;
   title: string;
   sourceName?: string;
+  sourceUrl?: string;
+  sourceText?: string;
   completedAt: string;
   accuracy: number;
   typedCharacters: number;

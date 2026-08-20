@@ -1,136 +1,187 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { normalizeWord } from "@/lib/vocabulary-storage";
+import { createCacheKey, readCachedResponse, writeCachedResponse, clearV1Cache } from "@/lib/dictionary/cache";
+import { createContextFingerprint } from "@/lib/dictionary/context";
+import { createDictionaryListboxLabel, createDictionaryPopoverLabel, shouldCloseOnOutsideClick } from "@/lib/dictionary/popover";
+import { resolvePreferredCandidate, resolvePreferenceSelection } from "@/lib/dictionary/ranking";
+import { getCandidateKey } from "@/lib/dictionary/candidate-key";
+import { preferenceService } from "@/lib/dictionary/preference-service";
+import type { DictionaryCandidate, DictionaryResponse } from "@/types/dictionary";
 import type { SavedWord } from "@/types/vocabulary";
 
-type Meaning = { english: string; korean?: string };
-type DictionaryPayload = Meaning & { word: string };
+let v1CacheCleared = false;
+function ensureV1CacheCleared() {
+  if (!v1CacheCleared && typeof window !== "undefined") {
+    v1CacheCleared = true;
+    clearV1Cache();
+  }
+}
+
+const memoryCache = new Map<string, DictionaryResponse>();
+const DISPLAY_CANDIDATE_LIMIT = 10;
 
 type DictionaryWordProps = {
   word: string;
   sentence?: string;
   sourceTitle?: string;
-  onLookupSuccess?: (word: SavedWord) => void;
+  practiceSessionId?: string;
+  onToggleSaved?: (word: SavedWord) => void;
+  tabIndex?: number;
+  onMovePrevious?: () => void;
+  onMoveNext?: () => void;
+  onRegisterButton?: (element: HTMLButtonElement | null) => void;
 };
 
-const memoryCache = new Map<string, Meaning>();
-const pendingRequests = new Map<string, Promise<Meaning>>();
-const CACHE_PREFIX = "chagok.dictionary.";
-
-function readCachedMeaning(word: string): Meaning | null {
-  const memory = memoryCache.get(word);
-  if (memory) return memory;
-
-  try {
-    const raw = sessionStorage.getItem(`${CACHE_PREFIX}${word}`);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<Meaning>;
-    if (typeof parsed.english !== "string") return null;
-    const meaning: Meaning = {
-      english: parsed.english,
-      korean: typeof parsed.korean === "string" ? parsed.korean : undefined,
-    };
-    memoryCache.set(word, meaning);
-    return meaning;
-  } catch {
-    return null;
-  }
-}
-
-function cacheMeaning(word: string, meaning: Meaning) {
-  memoryCache.set(word, meaning);
-  try {
-    sessionStorage.setItem(`${CACHE_PREFIX}${word}`, JSON.stringify(meaning));
-  } catch {
-    // 메모리 캐시는 계속 사용한다.
-  }
-}
-
-function fetchMeaning(word: string): Promise<Meaning> {
-  const normalized = normalizeWord(word);
-  if (!normalized) return Promise.reject(new Error("올바른 영어 단어가 아닙니다."));
-
-  const cached = readCachedMeaning(normalized);
-  if (cached) return Promise.resolve(cached);
-
-  const pending = pendingRequests.get(normalized);
-  if (pending) return pending;
-
-  const request = (async () => {
-    const response = await fetch(`/api/dictionary?word=${encodeURIComponent(normalized)}`, { cache: "no-store" });
-    const payload = (await response.json()) as Partial<DictionaryPayload> & { message?: string };
-    if (!response.ok || typeof payload.english !== "string") {
-      throw new Error(payload.message || "단어 뜻을 찾지 못했습니다.");
-    }
-
-    const meaning: Meaning = {
-      english: payload.english,
-      korean: typeof payload.korean === "string" ? payload.korean : undefined,
-    };
-    cacheMeaning(normalized, meaning);
-    return meaning;
-  })().finally(() => pendingRequests.delete(normalized));
-
-  pendingRequests.set(normalized, request);
-  return request;
-}
-
-export function DictionaryWord({ word, sentence, sourceTitle, onLookupSuccess }: DictionaryWordProps) {
-  const [meaning, setMeaning] = useState<Meaning | null>(null);
+export function DictionaryWord({ word, sentence, sourceTitle, practiceSessionId, onToggleSaved, tabIndex, onMovePrevious, onMoveNext, onRegisterButton }: DictionaryWordProps) {
+  const [response, setResponse] = useState<DictionaryResponse | null>(null);
   const [visible, setVisible] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const [listOpen, setListOpen] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState<"idle" | "copied" | "copy-error">("idle");
+  const [selectedCandidateKey, setSelectedCandidateKey] = useState<string | null>(null);
+  const [customMeaning, setCustomMeaning] = useState<string | undefined>(undefined);
+  const [hasUserPreference, setHasUserPreference] = useState(false);
   const mountedRef = useRef(true);
   const loadingRef = useRef(false);
   const emittedRef = useRef(false);
+  const wrapperRef = useRef<HTMLSpanElement | null>(null);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const generatedId = useId();
+  const popoverId = `dict-${generatedId.replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const normalized = normalizeWord(word);
 
-  function emitLookup(next: Meaning) {
-    if (emittedRef.current || !normalized || !onLookupSuccess) return;
-    emittedRef.current = true;
-    onLookupSuccess({
-      word: normalized,
-      meaning: next.korean || next.english,
-      exampleSentence: sentence,
-      sourceTitle,
-      addedAt: Date.now(),
-    });
+  const fingerprint = sentence && normalized ? createContextFingerprint(sentence, normalized) : "";
+  const cacheKey = createCacheKey(normalized, fingerprint);
+
+  useEffect(() => {
+    ensureV1CacheCleared();
+  }, []);
+
+  // ---------- roving tabindex button registration ----------
+  useEffect(() => {
+    if (onRegisterButton) {
+      onRegisterButton(buttonRef.current);
+      return () => onRegisterButton(null);
+    }
+    // onRegisterButton 의존 안 함: 등록/해제는 마운트/언마운트 시 1회만
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---------- cache helpers ----------
+  function lookupFromCache(): DictionaryResponse | null {
+    const mem = memoryCache.get(cacheKey);
+    if (mem) return mem;
+
+    const stored = readCachedResponse(cacheKey);
+    if (stored) {
+      memoryCache.set(cacheKey, stored);
+      return stored;
+    }
+    return null;
   }
 
+  function storeToCache(resp: DictionaryResponse) {
+    memoryCache.set(cacheKey, resp);
+    writeCachedResponse(cacheKey, resp);
+  }
+
+  // ---------- response / word 변경 시 preference 복원 ----------
   useEffect(() => {
     mountedRef.current = true;
     emittedRef.current = false;
-    const cached = readCachedMeaning(normalized);
-    if (cached) setMeaning(cached);
+    setListOpen(false);
+    setCustomMeaning(undefined);
+    setHasUserPreference(false);
+
+    const cached = lookupFromCache();
+    setResponse(cached ?? null);
 
     return () => {
       mountedRef.current = false;
     };
-  }, [normalized]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cacheKey]);
 
-  function beginLookup() {
+  // response가 설정된 후 preference 복원
+  useEffect(() => {
+    if (!response) return;
+
+    const preference = preferenceService.get(word);
+
+    // custom preference: candidate 선택 없이 customMeaning을 직접 사용
+    if (preference?.kind === "custom") {
+      setSelectedCandidateKey(null);
+      setCustomMeaning(preference.customMeaning);
+      setHasUserPreference(true);
+      return;
+    }
+
+    const { selectedKey } = resolvePreferenceSelection(response.candidates, preference ?? null);
+    setSelectedCandidateKey((current) => (current === selectedKey ? current : selectedKey));
+    setHasUserPreference(Boolean(selectedKey));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [response]);
+
+  // ---------- resolve preferred ----------
+  const preferred = customMeaning
+    ? undefined
+    : response
+      ? resolvePreferredCandidate(response.candidates, selectedCandidateKey)
+      : undefined;
+
+  const displayCandidates = response?.candidates.slice(0, DISPLAY_CANDIDATE_LIMIT) ?? [];
+
+  const displayedMeaning = customMeaning ?? preferred?.meaning;
+  const displayedSource = customMeaning ? undefined : preferred?.source;
+  const displayedMatchedTerm = customMeaning ? undefined : preferred?.matchedTerm;
+  const displayedPartOfSpeech = customMeaning ? undefined : preferred?.partOfSpeech;
+  const displayedExample = customMeaning ? undefined : preferred?.example;
+  const isCustomPreferred = Boolean(customMeaning);
+
+
+  // ---------- popover 상태 ----------
+  function closePopup(restoreFocus: boolean) {
+    setVisible(false);
+    setListOpen(false);
+    if (restoreFocus) buttonRef.current?.focus();
+  }
+
+  // ---------- 조회 ----------
+  function beginLookup(mode: "preview" | "pinned") {
     setVisible(true);
+    setPinned(mode === "pinned");
     setError("");
 
-    const cached = readCachedMeaning(normalized);
+    const cached = lookupFromCache();
     if (cached) {
-      setMeaning(cached);
-      emitLookup(cached);
+      setResponse(cached);
       return;
     }
-    if (meaning) {
-      emitLookup(meaning);
-      return;
-    }
+    if (response) return;
     if (loadingRef.current) return;
 
     loadingRef.current = true;
-    void fetchMeaning(word)
-      .then((next) => {
+
+    const query = new URLSearchParams({ word: normalized });
+    if (sentence) query.set("sentence", sentence);
+
+    void fetch(`/api/dictionary?${query.toString()}`, { cache: "no-store" })
+      .then(async (res) => {
+        const payload = (await res.json()) as Partial<DictionaryResponse> & { message?: string };
+        if (!res.ok || !Array.isArray(payload.candidates) || payload.candidates.length === 0) {
+          throw new Error(payload.message || "단어 뜻을 찾지 못했습니다.");
+        }
+        const dictResponse: DictionaryResponse = {
+          word: payload.word ?? normalized,
+          candidates: payload.candidates,
+          phonetic: payload.phonetic,
+        };
         if (mountedRef.current) {
-          setMeaning(next);
-          emitLookup(next);
+          storeToCache(dictResponse);
+          setResponse(dictResponse);
+          emittedRef.current = false;
         }
       })
       .catch((lookupError: unknown) => {
@@ -143,8 +194,89 @@ export function DictionaryWord({ word, sentence, sourceTitle, onLookupSuccess }:
       });
   }
 
-  function handleLeave() {
-    setVisible(false);
+  // ---------- handlers ----------
+  function handleWrapperMouseLeave() {
+    if (pinned) return;
+    closePopup(false);
+  }
+
+  function handleWrapperBlur(event: React.FocusEvent) {
+    if (pinned) return;
+    const next = event.relatedTarget;
+    if (next instanceof Node && wrapperRef.current?.contains(next)) return;
+    closePopup(false);
+  }
+
+  function handleButtonClick() {
+    if (visible && pinned) {
+      closePopup(false);
+      return;
+    }
+    beginLookup("pinned");
+  }
+
+  function handleSelectCandidate(candidate: DictionaryCandidate) {
+    const key = getCandidateKey(candidate);
+    setSelectedCandidateKey((current) => {
+      if (current === key) return current;
+      return key;
+    });
+    setCustomMeaning(undefined);
+    setHasUserPreference(true);
+    setListOpen(false);
+    emittedRef.current = false;
+    preferenceService.saveCandidate(word, key);
+  }
+
+  function handleResetPreference() {
+    preferenceService.remove(word);
+    setSelectedCandidateKey(null);
+    setCustomMeaning(undefined);
+    setHasUserPreference(false);
+    setListOpen(false);
+    emittedRef.current = false;
+  }
+
+  function toggleList(event: React.MouseEvent) {
+    event.stopPropagation();
+    setListOpen((prev) => !prev);
+  }
+
+  function handleRovingKeyDown(event: React.KeyboardEvent) {
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      onMovePrevious?.();
+      return;
+    }
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      onMoveNext?.();
+      return;
+    }
+  }
+
+  function handleKeyDown(event: React.KeyboardEvent) {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      closePopup(pinned);
+    }
+  }
+
+  function buildLookupWord(): SavedWord {
+    return {
+      id: typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `w-${Date.now()}`,
+      word,
+      normalizedWord: normalized,
+      meaning: displayedMeaning ?? "",
+      partOfSpeech: displayedPartOfSpeech,
+      exampleSentence: sentence,
+      sourceTitle,
+      dictionarySource: displayedSource,
+      candidateKey: preferred ? getCandidateKey(preferred) : undefined,
+      practiceSessionId,
+      savedAt: Date.now(),
+      updatedAt: Date.now(),
+    };
   }
 
   async function handleDoubleClick() {
@@ -152,13 +284,39 @@ export function DictionaryWord({ word, sentence, sourceTitle, onLookupSuccess }:
     setError("");
 
     try {
-      const nextMeaning = meaning ?? await fetchMeaning(word);
-      if (mountedRef.current) {
-        setMeaning(nextMeaning);
-        emitLookup(nextMeaning);
+      let resp = lookupFromCache();
+      if (!resp) {
+        const query = new URLSearchParams({ word: normalized });
+        if (sentence) query.set("sentence", sentence);
+        const res = await fetch(`/api/dictionary?${query.toString()}`, { cache: "no-store" });
+        const payload = (await res.json()) as Partial<DictionaryResponse> & { message?: string };
+        if (!res.ok || !Array.isArray(payload.candidates) || payload.candidates.length === 0) {
+          throw new Error(payload.message || "단어 뜻을 찾지 못했습니다.");
+        }
+        resp = {
+          word: payload.word ?? normalized,
+          candidates: payload.candidates,
+          phonetic: payload.phonetic,
+        };
+        storeToCache(resp);
       }
-      await navigator.clipboard.writeText(`${normalized} — ${nextMeaning.korean || nextMeaning.english}`);
-      if (mountedRef.current) setStatus("copied");
+      if (mountedRef.current) {
+        setResponse(resp);
+
+        if (customMeaning) {
+          await navigator.clipboard.writeText(`${normalized} — ${customMeaning}`);
+          if (mountedRef.current) setStatus("copied");
+        } else {
+          const resolved = resolvePreferredCandidate(resp.candidates, selectedCandidateKey);
+          if (resolved) {
+            const clipText = resp.word === resolved.matchedTerm || !resolved.matchedTerm
+              ? `${normalized} — ${resolved.meaning}`
+              : `${resolved.matchedTerm} · ${resolved.meaning}`;
+            await navigator.clipboard.writeText(clipText);
+            if (mountedRef.current) setStatus("copied");
+          }
+        }
+      }
     } catch {
       if (mountedRef.current) setStatus("copy-error");
     }
@@ -166,34 +324,225 @@ export function DictionaryWord({ word, sentence, sourceTitle, onLookupSuccess }:
     window.setTimeout(() => mountedRef.current && setStatus("idle"), 1400);
   }
 
+  // ---------- 외부 클릭 닫기 (visible일 때만 document listener) ----------
+  useEffect(() => {
+    if (!visible) return;
+
+    function handleDocumentPointerDown(event: PointerEvent) {
+      if (shouldCloseOnOutsideClick(event.target, wrapperRef.current)) {
+        closePopup(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handleDocumentPointerDown);
+    return () => document.removeEventListener("pointerdown", handleDocumentPointerDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+
+  function sourceLabel(source: DictionaryCandidate["source"]): string | undefined {
+    if (source.startsWith("glossary-")) return "경제·시사 용어";
+    if (source === "ai") return "AI 추천";
+    return undefined;
+  }
+
+  // ---------- render ----------
   return (
     <span
+      ref={wrapperRef}
       className="relative inline-block"
-      onMouseEnter={beginLookup}
-      onFocus={beginLookup}
-      onMouseLeave={handleLeave}
-      onBlur={handleLeave}
+      onMouseEnter={() => beginLookup("preview")}
+      onMouseLeave={handleWrapperMouseLeave}
+      onBlur={handleWrapperBlur}
       onDoubleClick={handleDoubleClick}
     >
       <button
+        ref={buttonRef}
         type="button"
+        onClick={handleButtonClick}
+        onKeyDown={handleRovingKeyDown}
+        tabIndex={tabIndex ?? 0}
+        aria-haspopup="dialog"
+        aria-expanded={visible}
+        aria-controls={popoverId}
         className="cursor-help rounded px-0.5 text-inherit transition hover:bg-yellow-200 hover:text-zinc-950 focus:bg-yellow-200 focus:text-zinc-950 focus:outline-none dark:hover:bg-yellow-300 dark:focus:bg-yellow-300"
       >
         {word}
       </button>
 
       {visible && (
-        <span className="absolute bottom-full left-1/2 z-30 mb-2 w-72 max-w-[80vw] -translate-x-1/2 rounded-xl border border-zinc-200 bg-white p-4 text-left text-xs leading-5 text-zinc-700 shadow-xl dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
-          <strong className="block text-sm text-zinc-950 dark:text-zinc-50">{normalized}</strong>
-          {!meaning && !error && <span className="mt-2 block">뜻을 찾는 중…</span>}
+        <span
+          id={popoverId}
+          role="dialog"
+          aria-modal="false"
+          aria-label={createDictionaryPopoverLabel(normalized)}
+          className="absolute bottom-full left-1/2 z-30 mb-2 w-72 max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-xl border border-zinc-200 bg-white p-4 text-left text-xs leading-5 text-zinc-700 shadow-xl dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+          onKeyDown={handleKeyDown}
+        >
+          <div className="flex items-start justify-between gap-2">
+            <strong className="block text-sm text-zinc-950 dark:text-zinc-50">{normalized}</strong>
+            <div className="flex shrink-0 items-center gap-1">
+              {onToggleSaved && displayedMeaning && (
+                <button
+                  type="button"
+                  onClick={() => onToggleSaved(buildLookupWord())}
+                  aria-label={`${normalized} 단어 저장`}
+                  className="shrink-0 rounded-lg border border-amber-200 px-2 py-1 text-sm text-amber-500 transition hover:bg-amber-50 dark:border-amber-800 dark:hover:bg-amber-950/30"
+                >
+                  ★
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => closePopup(true)}
+                aria-label="단어 뜻 팝오버 닫기"
+                className="shrink-0 rounded-lg border border-zinc-200 px-2 py-1 text-[10px] font-semibold text-zinc-500 transition hover:bg-zinc-50 hover:text-zinc-700 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+              >
+                닫기
+              </button>
+            </div>
+          </div>
+
+          {!displayedMeaning && !error && <span className="mt-2 block">뜻을 찾는 중&hellip;</span>}
           {error && <span className="mt-2 block text-red-600 dark:text-red-400">{error}</span>}
-          {meaning?.korean && <span className="mt-2 block text-sm font-semibold text-zinc-950 dark:text-zinc-50">{meaning.korean}</span>}
-          {meaning && (
+
+          {/* 대표 뜻 표시 (custom 또는 candidate) */}
+          {displayedMeaning && !listOpen && (
             <>
-              <span className="mt-3 block text-[10px] font-semibold uppercase tracking-wider text-zinc-400">영문 정의</span>
-              <span className="mt-1 block">{meaning.english}</span>
+              {displayedMatchedTerm && displayedMatchedTerm !== normalized && (
+                <span className="mt-1 block text-[10px] font-semibold uppercase tracking-wider text-zinc-400">{displayedMatchedTerm}</span>
+              )}
+              {displayedPartOfSpeech && (
+                <span className="mt-1 block text-[10px] font-semibold uppercase tracking-wider text-zinc-400">{displayedPartOfSpeech}</span>
+              )}
+              <span className="mt-1 block text-sm font-semibold text-zinc-950 dark:text-zinc-50">{displayedMeaning}</span>
+              {displayedExample && !isCustomPreferred && (
+                <span className="mt-2 block italic text-zinc-500">&ldquo;{displayedExample}&rdquo;</span>
+              )}
+              <div className="mt-1 flex flex-wrap items-center gap-1">
+                {isCustomPreferred ? (
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400">내가 입력한 기본 뜻</span>
+                ) : (
+                  <>
+                    {displayedSource && sourceLabel(displayedSource) && (
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">{sourceLabel(displayedSource)}</span>
+                    )}
+                    {hasUserPreference && (
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400">내 선택</span>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {displayCandidates.length >= 2 && (
+                <button
+                  type="button"
+                  onClick={toggleList}
+                  aria-expanded={listOpen}
+                  className="mt-2 w-full rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-zinc-600 transition hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                >
+                  다른 뜻 보기 ({displayCandidates.length + (isCustomPreferred ? 1 : 0)})
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => void handleDoubleClick()}
+                aria-label={`${normalized} 뜻 복사`}
+                className="mt-2 w-full rounded-lg border border-zinc-200 px-3 py-2.5 text-xs font-semibold text-zinc-600 transition hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              >
+                뜻 복사
+              </button>
             </>
           )}
+
+          {/* 후보 목록 (펼침) */}
+          {displayedMeaning && listOpen && (
+            <div className="mt-2">
+              <ul
+                role="listbox"
+                aria-label={createDictionaryListboxLabel(normalized)}
+                className="max-h-52 overflow-y-auto rounded-lg border border-zinc-200 dark:border-zinc-700"
+              >
+                {isCustomPreferred && (
+                  <li
+                    role="option"
+                    aria-selected={true}
+                    className="flex cursor-pointer items-start gap-2 border-b border-zinc-100 px-3 py-2.5 text-xs transition last:border-b-0 dark:border-zinc-800"
+                  >
+                    <span className="mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400">✓</span>
+                    <div className="min-w-0 flex-1">
+                      <span className="block text-[10px] font-semibold uppercase tracking-wider text-zinc-400">내가 입력한 기본 뜻</span>
+                      <span className="block text-sm font-medium text-zinc-950 dark:text-zinc-50">{customMeaning}</span>
+                    </div>
+                  </li>
+                )}
+                {displayCandidates.map((candidate, index) => {
+                  const key = getCandidateKey(candidate);
+                  const isSelected = key === selectedCandidateKey || (!selectedCandidateKey && !index && !isCustomPreferred);
+                  const isUserPref = key === selectedCandidateKey && hasUserPreference && !isCustomPreferred;
+                  return (
+                    <li
+                      key={key}
+                      role="option"
+                      aria-selected={isSelected}
+                      tabIndex={0}
+                      onClick={() => handleSelectCandidate(candidate)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          handleSelectCandidate(candidate);
+                        }
+                      }}
+                      className={`flex cursor-pointer items-start gap-2 border-b border-zinc-100 px-3 py-2.5 text-xs transition last:border-b-0 hover:bg-zinc-50 focus:bg-zinc-50 focus:outline-none dark:border-zinc-800 dark:hover:bg-zinc-800 dark:focus:bg-zinc-800 ${isSelected ? "bg-emerald-50 dark:bg-emerald-950/30" : ""}`}
+                    >
+                      <span className="mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400">
+                        {isSelected ? "✓" : ""}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        {candidate.matchedTerm && candidate.matchedTerm !== normalized && (
+                          <span className="block text-[10px] font-semibold uppercase tracking-wider text-zinc-400">{candidate.matchedTerm}</span>
+                        )}
+                        {candidate.partOfSpeech && (
+                          <span className="block text-[10px] uppercase tracking-wider text-zinc-400">{candidate.partOfSpeech}</span>
+                        )}
+                        <span className="block text-sm font-medium text-zinc-950 dark:text-zinc-50">{candidate.meaning}</span>
+                        <div className="flex flex-wrap items-center gap-1">
+                          {sourceLabel(candidate.source) && (
+                            <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">{sourceLabel(candidate.source)}</span>
+                          )}
+                          {isUserPref && (
+                            <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400">내 선택</span>
+                          )}
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+              {response && response.candidates.length > DISPLAY_CANDIDATE_LIMIT && (
+                <p className="mt-1 text-[10px] text-zinc-400">+ {response.candidates.length - DISPLAY_CANDIDATE_LIMIT}개의 추가 뜻</p>
+              )}
+
+              {hasUserPreference && (
+                <button
+                  type="button"
+                  onClick={handleResetPreference}
+                  className="mt-2 w-full rounded-lg border border-amber-200 px-3 py-1.5 text-xs font-semibold text-amber-700 transition hover:bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-950/30"
+                >
+                  기본 추천으로 되돌리기
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setListOpen(false)}
+                className="mt-2 w-full rounded-lg border border-zinc-200 px-3 py-2.5 text-xs font-semibold text-zinc-600 dark:border-zinc-700 dark:text-zinc-300"
+              >
+                닫기
+              </button>
+            </div>
+          )}
+
           {status === "copied" && <span className="mt-3 block font-semibold text-emerald-600">단어와 뜻을 복사했습니다.</span>}
           {status === "copy-error" && <span className="mt-3 block font-semibold text-red-600">클립보드 복사에 실패했습니다.</span>}
         </span>

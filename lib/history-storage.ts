@@ -58,6 +58,8 @@ function normalizeHistoryEntry(value: unknown): PracticeHistoryEntry | null {
   }
 
   const sourceName = normalizeRequiredString(candidate.sourceName);
+  const sourceUrl = normalizeRequiredString(candidate.sourceUrl);
+  const rawSourceText = typeof candidate.sourceText === "string" ? candidate.sourceText.slice(0, 20000) : undefined;
   const wordsPerMinute = normalizeOptionalRoundedNumber(candidate.wordsPerMinute);
   const elapsedSeconds = normalizeOptionalNonNegativeInteger(candidate.elapsedSeconds);
 
@@ -66,6 +68,8 @@ function normalizeHistoryEntry(value: unknown): PracticeHistoryEntry | null {
     articleId,
     title,
     ...(sourceName ? { sourceName } : {}),
+    ...(sourceUrl ? { sourceUrl } : {}),
+    ...(rawSourceText ? { sourceText: rawSourceText } : {}),
     completedAt,
     accuracy,
     typedCharacters,

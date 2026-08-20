@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { DEFAULT_TYPING_SETTINGS, normalizeTypingSettings } from "./typing-settings";
 import {
   LEGACY_TYPING_SETTINGS_KEYS,
   loadTypingSettings,
@@ -41,17 +42,27 @@ describe("typing settings storage", () => {
     window.localStorage.setItem(TYPING_SETTINGS_KEY, JSON.stringify({ fontSize: 31, showTranslations: true }));
     window.sessionStorage.setItem(LEGACY_TYPING_SETTINGS_KEYS[0], JSON.stringify({ fontSize: 20, showTranslations: false }));
     expect(loadTypingSettings(defaults, normalize)).toEqual({ fontSize: 31, showTranslations: true });
+    expect(window.sessionStorage.getItem(LEGACY_TYPING_SETTINGS_KEYS[0])).not.toBeNull();
   });
 
   it("loads a legacy session value and migrates it to localStorage", () => {
     window.sessionStorage.setItem(LEGACY_TYPING_SETTINGS_KEYS[0], JSON.stringify({ fontSize: 29, showTranslations: true }));
     expect(loadTypingSettings(defaults, normalize)).toEqual({ fontSize: 29, showTranslations: true });
     expect(JSON.parse(window.localStorage.getItem(TYPING_SETTINGS_KEY) ?? "null")).toEqual({ fontSize: 29, showTranslations: true });
+    expect(window.sessionStorage.getItem(LEGACY_TYPING_SETTINGS_KEYS[0])).toBeNull();
   });
 
   it("returns defaults for malformed data", () => {
     window.localStorage.setItem(TYPING_SETTINGS_KEY, "{bad-json");
     expect(loadTypingSettings(defaults, normalize)).toEqual(defaults);
+  });
+
+  it("migrates a partial legacy session value merged with typing-settings defaults", () => {
+    window.sessionStorage.setItem(LEGACY_TYPING_SETTINGS_KEYS[0], JSON.stringify({ fontSize: 29, dictationMode: true }));
+    const loaded = loadTypingSettings(DEFAULT_TYPING_SETTINGS, normalizeTypingSettings);
+    expect(loaded).toEqual({ ...DEFAULT_TYPING_SETTINGS, fontSize: 29, dictationMode: true });
+    expect(JSON.parse(window.localStorage.getItem(TYPING_SETTINGS_KEY) ?? "null")).toEqual(loaded);
+    expect(window.sessionStorage.getItem(LEGACY_TYPING_SETTINGS_KEYS[0])).toBeNull();
   });
 
   it("saves settings to the current localStorage key", () => {

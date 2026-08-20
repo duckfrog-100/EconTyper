@@ -2,24 +2,27 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { DictionaryWord } from "@/components/practice/dictionary-word";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { PracticeResult } from "@/components/practice/practice-result";
-import { SentenceTranslation } from "@/components/practice/sentence-translation";
-import { DEFAULT_TYPING_SETTINGS, TypingSettings, type TypingSettingsValue } from "@/components/practice/typing-settings";
+import { PracticeSentenceCard } from "@/components/practice/practice-sentence-card";
+import { TypingSettings } from "@/components/practice/typing-settings";
 import { VocabularyDrawer } from "@/components/practice/vocabulary-drawer";
 import { useSpeechSynthesis } from "@/hooks/use-speech-synthesis";
 import { addPracticeHistoryEntry } from "@/lib/history-storage";
 import { buildPracticeHistoryEntry } from "@/lib/practice-history-entry";
+import { createPracticeRoute, buildRetryText, type PracticeRetryMode } from "@/lib/practice-retry";
+import { createPracticeTimer, finishPracticeTimer, getElapsedSeconds, startPracticeTimer, type PracticeTimerState } from "@/lib/practice-timer";
 import {
-  buildCharacterStates,
-  calculateAccuracy,
   calculateAggregateAccuracy,
+  calculateWordsPerMinute,
   hasIncorrectCharacter,
   isTypingComplete,
   segmentSentences,
 } from "@/lib/practice-utils";
 import { getCurrentArticle, saveCurrentArticle } from "@/lib/session-storage";
+import { focusTypingInputAtEnd } from "@/lib/typing-focus";
+import { DEFAULT_TYPING_SETTINGS, normalizeTypingSettings, type TypingSettingsValue } from "@/lib/typing-settings";
+import { loadTypingSettings, saveTypingSettings } from "@/lib/typing-settings-storage";
 import {
   normalizeWord,
   readSavedWords,
@@ -31,53 +34,11 @@ import {
 import type { PracticeArticle } from "@/types/article";
 import type { SavedWord } from "@/types/vocabulary";
 
-const SETTINGS_KEY = "chagok.typingSettings";
-
-function isNumberInRange(value: unknown, min: number, max: number): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value >= min && value <= max;
-}
-
-function loadSettings(): TypingSettingsValue {
-  try {
-    const raw = sessionStorage.getItem(SETTINGS_KEY) ?? sessionStorage.getItem("econtyper.typingSettings");
-    if (!raw) return DEFAULT_TYPING_SETTINGS;
-    const parsed = JSON.parse(raw) as Partial<TypingSettingsValue>;
-    return {
-      fontSize: isNumberInRange(parsed.fontSize, 18, 36) ? parsed.fontSize : DEFAULT_TYPING_SETTINGS.fontSize,
-      fontWeight: isNumberInRange(parsed.fontWeight, 300, 700) ? parsed.fontWeight : DEFAULT_TYPING_SETTINGS.fontWeight,
-      lineHeight: isNumberInRange(parsed.lineHeight, 1.3, 2.2) ? parsed.lineHeight : DEFAULT_TYPING_SETTINGS.lineHeight,
-      fontFamily: parsed.fontFamily === "serif" || parsed.fontFamily === "sans" ? parsed.fontFamily : DEFAULT_TYPING_SETTINGS.fontFamily,
-      showTranslations: typeof parsed.showTranslations === "boolean" ? parsed.showTranslations : DEFAULT_TYPING_SETTINGS.showTranslations,
-      speechLocale: parsed.speechLocale === "en-GB" ? "en-GB" : "en-US",
-      speechRate: isNumberInRange(parsed.speechRate, 0.5, 1.5) ? parsed.speechRate : DEFAULT_TYPING_SETTINGS.speechRate,
-      dictationMode: typeof parsed.dictationMode === "boolean" ? parsed.dictationMode : DEFAULT_TYPING_SETTINGS.dictationMode,
-      autoPlayNext: typeof parsed.autoPlayNext === "boolean" ? parsed.autoPlayNext : DEFAULT_TYPING_SETTINGS.autoPlayNext,
-    };
-  } catch {
-    return DEFAULT_TYPING_SETTINGS;
-  }
-}
-
-type InteractiveSentenceProps = {
-  sentence: string;
-  sourceTitle: string;
-  style: React.CSSProperties;
-  onLookupSuccess: (word: SavedWord) => void;
-};
-
-function InteractiveSentence({ sentence, sourceTitle, style, onLookupSuccess }: InteractiveSentenceProps) {
-  return (
-    <p className="text-zinc-700 dark:text-zinc-300" style={style}>
-      {sentence.split(/(\s+)/).map((part, index) =>
-        /[A-Za-z]/.test(part) ? (
-          <DictionaryWord key={`${part}-${index}`} word={part} sentence={sentence} sourceTitle={sourceTitle} onLookupSuccess={onLookupSuccess} />
-        ) : (
-          <span key={`${part}-${index}`}>{part}</span>
-        ),
-      )}
-    </p>
-  );
-}
+/**
+ * 문장 완료 후 다음 문장으로 자동 이동/재생하기 전 지연 (밀리초).
+ * 사용자가 마지막 글자를 입력한 직후 결과를 시각적으로 확인할 수 있을 정도의 짧은 간격.
+ */
+const NEXT_SENTENCE_DELAY_MS = 180;
 
 export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
   const router = useRouter();
@@ -89,14 +50,48 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [vocabularyOpen, setVocabularyOpen] = useState(false);
-  const [settings, setSettings] = useState<TypingSettingsValue>(DEFAULT_TYPING_SETTINGS);
+  const [settings, setSettings] = useState<TypingSettingsValue>(() => loadTypingSettings(DEFAULT_TYPING_SETTINGS, normalizeTypingSettings));
+  const [timer, setTimer] = useState<PracticeTimerState>(createPracticeTimer);
+  const [nowTickMs, setNowTickMs] = useState(() => Date.now());
   const [sessionWords, setSessionWords] = useState<SavedWord[]>([]);
   const [savedWords, setSavedWords] = useState<SavedWord[]>([]);
   const inputRefs = useRef<Array<HTMLTextAreaElement | null>>([]);
   const cardRefs = useRef<Array<HTMLElement | null>>([]);
   const savedCompletionRef = useRef<string | null>(null);
+  const settingsTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const settingsDialogId = useId();
+  const settingsTitleId = useId();
   const { supported: speechSupported, speakingIndex, speak, stop } = useSpeechSynthesis();
 
+  // ---------- refs for callback-safe latest values ----------
+  const typedBySentenceRef = useRef(typedBySentence);
+  typedBySentenceRef.current = typedBySentence;
+
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const speechSupportedRef = useRef(speechSupported);
+  speechSupportedRef.current = speechSupported;
+  const speakRef = useRef(speak);
+  speakRef.current = speak;
+
+  // 타이머 ref: 다음 문장 자동 이동/재생 예약 관리
+  const nextSentenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ---------- sentences & styles ----------
+  const sentences = useMemo(() => segmentSentences(article?.text ?? ""), [article?.text]);
+
+  // sentencesRef는 sentences가 정의된 후 ref.current를 설정한다
+  const sentencesRef = useRef(sentences);
+  sentencesRef.current = sentences;
+
+  const textStyle = useMemo<React.CSSProperties>(() => ({
+    fontSize: `${settings.fontSize}px`,
+    fontWeight: settings.fontWeight,
+    lineHeight: settings.lineHeight,
+    fontFamily: settings.fontFamily === "serif" ? "Georgia, Cambria, 'Times New Roman', serif" : "Inter, ui-sans-serif, system-ui, sans-serif",
+  }), [settings]);
+
+  // ---------- session reset ----------
   useEffect(() => {
     const storedArticle = getCurrentArticle();
     setArticle(sessionId && storedArticle?.id === sessionId ? storedArticle : null);
@@ -105,41 +100,36 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
     setWrongAttemptIndices(new Set());
     setSummaryOpen(false);
     setActiveIndex(0);
-    setSettings(loadSettings());
+    setSettings(loadTypingSettings(DEFAULT_TYPING_SETTINGS, normalizeTypingSettings));
     setSessionWords(readSessionWords(sessionId));
     setSavedWords(readSavedWords());
     setVocabularyOpen(false);
+    setTimer(createPracticeTimer());
     savedCompletionRef.current = null;
+
+    // 예약된 다음-문장 타이머 정리
+    if (nextSentenceTimerRef.current !== null) {
+      clearTimeout(nextSentenceTimerRef.current);
+      nextSentenceTimerRef.current = null;
+    }
     stop();
   }, [sessionId, stop]);
 
-  useEffect(() => {
-    try {
-      sessionStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-    } catch {
-      // 현재 화면에서는 설정을 계속 유지한다.
-    }
-  }, [settings]);
-
-  const sentences = useMemo(() => segmentSentences(article?.text ?? ""), [article?.text]);
-  const textStyle = useMemo<React.CSSProperties>(() => ({
-    fontSize: `${settings.fontSize}px`,
-    fontWeight: settings.fontWeight,
-    lineHeight: settings.lineHeight,
-    fontFamily: settings.fontFamily === "serif" ? "Georgia, Cambria, 'Times New Roman', serif" : "Inter, ui-sans-serif, system-ui, sans-serif",
-  }), [settings]);
-
+  // ---------- derived metrics ----------
   const completedCount = sentences.reduce(
     (count, sentence, index) => count + (isTypingComplete(sentence.text, typedBySentence[index] ?? "") ? 1 : 0),
     0,
   );
   const totalTyped = Object.values(typedBySentence).reduce((sum, value) => sum + Array.from(value).length, 0);
   const aggregateAccuracy = calculateAggregateAccuracy(
-    sentences.map((sentence) => sentence.text),
+    sentences.map((s) => s.text),
     sentences.map((_, index) => typedBySentence[index] ?? ""),
   );
   const allComplete = sentences.length > 0 && completedCount === sentences.length;
+  const elapsedSeconds = getElapsedSeconds(timer, nowTickMs);
+  const wordsPerMinute = calculateWordsPerMinute(totalTyped, elapsedSeconds);
 
+  // ---------- completion persistence ----------
   useEffect(() => {
     if (!allComplete || !article) return;
 
@@ -147,20 +137,43 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
     if (savedCompletionRef.current === completionKey) return;
     savedCompletionRef.current = completionKey;
 
+    const finishedAtMs = Date.now();
+    setTimer((current) => finishPracticeTimer(current, finishedAtMs));
+
+    const completionElapsedSeconds = getElapsedSeconds({ startedAtMs: timer.startedAtMs, endedAtMs: finishedAtMs }, finishedAtMs);
+    const completionWordsPerMinute = calculateWordsPerMinute(totalTyped, completionElapsedSeconds);
+
     addPracticeHistoryEntry(buildPracticeHistoryEntry({
       id: crypto.randomUUID(),
       article,
-      completedAt: new Date().toISOString(),
+      completedAt: new Date(finishedAtMs).toISOString(),
       accuracy: aggregateAccuracy,
       typedCharacters: totalTyped,
       wrongSentenceCount: wrongAttemptIndices.size,
       sessionWordCount: sessionWords.length,
       savedWordCount: savedWords.length,
       sentenceCount: sentences.length,
+      wordsPerMinute: completionWordsPerMinute,
+      elapsedSeconds: completionElapsedSeconds,
     }));
     setSummaryOpen(true);
-  }, [aggregateAccuracy, allComplete, article, completedCount, savedWords.length, sentences.length, sessionId, sessionWords.length, totalTyped, wrongAttemptIndices.size]);
+  }, [aggregateAccuracy, allComplete, article, completedCount, savedWords.length, sentences.length, sessionId, sessionWords.length, timer.startedAtMs, totalTyped, wrongAttemptIndices.size]);
 
+  // ---------- summary timer tick ----------
+  useEffect(() => {
+    if (!summaryOpen || timer.endedAtMs !== null) return;
+    setNowTickMs(Date.now());
+    const interval = window.setInterval(() => setNowTickMs(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [summaryOpen, timer.endedAtMs]);
+
+  // ---------- settings ----------
+  function updateSettings(next: TypingSettingsValue) {
+    setSettings(next);
+    saveTypingSettings(next);
+  }
+
+  // ---------- vocabulary ----------
   function storeSessionWords(next: SavedWord[]) {
     setSessionWords(next);
     writeSessionWords(sessionId, next);
@@ -171,13 +184,6 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
     writeSavedWords(next);
   }
 
-  function handleLookupSuccess(word: SavedWord) {
-    setSessionWords((current) => {
-      const next = upsertWord(current, word);
-      writeSessionWords(sessionId, next);
-      return next;
-    });
-  }
 
   function handleToggleSaved(word: SavedWord) {
     const normalized = normalizeWord(word.word);
@@ -196,13 +202,21 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
     storeSavedWords(importedWords.reduce((words, word) => upsertWord(words, word), savedWords));
   }
 
-  function activateSentence(index: number, scroll = false) {
+  // ---------- sentence navigation ----------
+  const activateSentence = useCallback((index: number, scroll = false) => {
     setActiveIndex(index);
     if (scroll) cardRefs.current[index]?.scrollIntoView({ behavior: "smooth", block: "center" });
-    window.setTimeout(() => inputRefs.current[index]?.focus(), 0);
-  }
+    // focus()만 호출하면 브라우저가 이전 selection을 복원해 caret이 중간에 남을 수 있다.
+    // 필사 입력은 끝에서만 이어가므로 caret을 현재 값의 끝으로 복원한다.
+    window.setTimeout(() => focusTypingInputAtEnd(inputRefs.current[index]), 0);
+  }, []);
 
-  function playSentence(index: number) {
+  // activateSentenceRef는 activateSentence가 정의된 후 초기화
+  const activateSentenceRef = useRef(activateSentence);
+  activateSentenceRef.current = activateSentence;
+
+  // ---------- speech: manual play ----------
+  const playSentence = useCallback((index: number) => {
     const sentence = sentences[index];
     if (!sentence || !speechSupported) return;
     if (speakingIndex === index) {
@@ -211,14 +225,49 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
     }
     activateSentence(index);
     speak({ index, text: sentence.text, locale: settings.speechLocale, rate: settings.speechRate });
-  }
+  }, [sentences, speechSupported, speakingIndex, stop, activateSentence, speak, settings.speechLocale, settings.speechRate]);
 
-  function updateTyped(index: number, value: string) {
+  // ---------- timed next-sentence (auto-advance + optional auto-play) ----------
+  const scheduleNextSentence = useCallback((nextIndex: number) => {
+    // 이전 예약 취소 (연속 완료 시 마지막만 유효)
+    if (nextSentenceTimerRef.current !== null) {
+      clearTimeout(nextSentenceTimerRef.current);
+    }
+
+    nextSentenceTimerRef.current = setTimeout(() => {
+      nextSentenceTimerRef.current = null;
+
+      // ref에서 최신 값 사용
+      const latestSentences = sentencesRef.current;
+      const latestSettings = settingsRef.current;
+      const latestSpeechSupported = speechSupportedRef.current;
+      const latestSpeak = speakRef.current;
+      const latestActivate = activateSentenceRef.current;
+
+      const sentence = latestSentences[nextIndex];
+      if (!sentence) return;
+
+      latestActivate(nextIndex, true);
+      if (latestSettings.autoPlayNext && latestSpeechSupported) {
+        latestSpeak({
+          index: nextIndex,
+          text: sentence.text,
+          locale: latestSettings.speechLocale,
+          rate: latestSettings.speechRate,
+        });
+      }
+    }, NEXT_SENTENCE_DELAY_MS);
+  }, []);
+
+  // ---------- typing handler ----------
+  const updateTyped = useCallback((index: number, value: string) => {
     const normalized = value.replace(/\r?\n/g, " ");
+    if (normalized) {
+      setTimer((current) => startPracticeTimer(current, Date.now()));
+    }
     const target = sentences[index]?.text ?? "";
-    const wasComplete = isTypingComplete(target, typedBySentence[index] ?? "");
-    const nowComplete = isTypingComplete(target, normalized);
 
+    // wrong attempt tracking (pure updater)
     if (hasIncorrectCharacter(target, normalized)) {
       setWrongAttemptIndices((current) => {
         if (current.has(index)) return current;
@@ -228,20 +277,25 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
       });
     }
 
+    // 완료 전이 감지: ref에서 최신 typed 상태 읽기 (updater 의존 제거)
+    const wasComplete = isTypingComplete(target, typedBySentenceRef.current[index] ?? "");
+    const nowComplete = isTypingComplete(target, normalized);
+
+    // typed state 업데이트 (순수 updater, side effect 없음)
     setTypedBySentence((current) => ({ ...current, [index]: normalized }));
 
+    // 완료 전이 발생 시 다음 문장 예약 (updater 외부, ref 기반)
     if (!wasComplete && nowComplete && index < sentences.length - 1) {
-      const nextIndex = index + 1;
-      window.setTimeout(() => {
-        activateSentence(nextIndex, true);
-        if (settings.autoPlayNext && speechSupported) {
-          speak({ index: nextIndex, text: sentences[nextIndex].text, locale: settings.speechLocale, rate: settings.speechRate });
-        }
-      }, 180);
+      scheduleNextSentence(index + 1);
     }
-  }
+  }, [sentences, scheduleNextSentence]);
 
-  function startRetry(text: string, titleSuffix: string) {
+  // ---------- retry ----------
+  const revealSentence = useCallback((index: number) => {
+    setRevealedBySentence((current) => ({ ...current, [index]: true }));
+  }, []);
+
+  function startRetry(text: string, titleSuffix: string, mode: PracticeRetryMode) {
     if (!article || !text.trim()) return;
     const nextArticle: PracticeArticle = {
       ...article,
@@ -251,32 +305,32 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
       createdAt: new Date().toISOString(),
     };
     saveCurrentArticle(nextArticle);
-    router.push(`/practice/${nextArticle.id}`);
+    router.push(createPracticeRoute(nextArticle.id, mode));
   }
 
   function retryWrong() {
-    const text = sentences
-      .filter((_, index) => wrongAttemptIndices.has(index))
-      .map((sentence) => sentence.text)
-      .join("\n\n");
-    startRetry(text, "틀린 문장 복습");
+    const text = buildRetryText(sentences.map((sentence) => sentence.text), wrongAttemptIndices);
+    startRetry(text, "틀린 문장 복습", "wrong");
   }
 
+  // ---------- render: loading ----------
   if (article === undefined) {
     return <main className="mx-auto max-w-3xl px-5 py-16 text-sm text-zinc-500">연습 내용을 불러오는 중입니다…</main>;
   }
 
+  // ---------- render: no article ----------
   if (!article) {
     return (
       <main className="mx-auto flex min-h-screen max-w-xl flex-col justify-center px-5 py-16 text-center">
         <p className="text-sm font-semibold uppercase tracking-widest text-zinc-500">진행 중인 연습 없음</p>
         <h1 className="mt-3 text-3xl font-semibold">먼저 연습할 글을 선택해 주세요.</h1>
-        <p className="mt-4 text-zinc-600 dark:text-zinc-400">연습 내용은 시작한 탭과 세션에서만 유지됩니다.</p>
-        <Link href="/" className="mx-auto mt-7 rounded-2xl bg-zinc-950 px-5 py-3 font-medium text-white dark:bg-zinc-100 dark:text-zinc-950">홈으로 돌아가기</Link>
+        <p className="mt-4 text-zinc-600 dark:text-zinc-400">연습 내용은 시작한 탭에서만 유지됩니다.</p>
+        <Link href="/" className="mx-auto mt-7 rounded-xl bg-zinc-950 px-5 py-3 font-medium text-white dark:bg-zinc-100 dark:text-zinc-950">홈으로 돌아가기</Link>
       </main>
     );
   }
 
+  // ---------- render: summary ----------
   if (summaryOpen) {
     return (
       <PracticeResult
@@ -286,34 +340,47 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
         totalSentences={sentences.length}
         totalTyped={totalTyped}
         accuracy={aggregateAccuracy}
+        wordsPerMinute={wordsPerMinute}
+        elapsedSeconds={elapsedSeconds}
         wrongCount={wrongAttemptIndices.size}
         sessionWords={sessionWords}
         savedWordsCount={savedWords.length}
         onRetryWrong={retryWrong}
-        onRetryAll={() => startRetry(article.text, "전체 다시 연습")}
+        onRetryAll={() => startRetry(article.text, "전체 다시 연습", "all")}
         onReturnHome={() => router.push("/")}
       />
     );
   }
 
+  // ---------- render: practice ----------
   return (
     <main className="mx-auto w-full max-w-5xl px-5 py-8 sm:px-8 sm:py-12">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Link href="/" className="text-sm text-zinc-500 hover:text-zinc-950 dark:hover:text-zinc-100">← 홈</Link>
+        <Link href="/" className="inline-flex min-h-11 items-center rounded-xl border border-zinc-300 px-4 py-2 text-sm font-semibold dark:border-zinc-700">← 홈으로</Link>
         <div className="flex flex-wrap items-center justify-end gap-2">
+          <button type="button" onClick={() => setVocabularyOpen(true)} className="min-h-11 rounded-xl border border-zinc-200 px-4 text-xs font-semibold dark:border-zinc-800">단어장 ({savedWords.length})</button>
+          <button type="button" onClick={() => updateSettings({ ...settings, dictationMode: !settings.dictationMode })} className={`min-h-11 rounded-xl border px-4 text-xs font-semibold transition ${settings.dictationMode ? "border-violet-200 bg-violet-50 text-violet-700 dark:bg-violet-950/30 dark:text-violet-300" : "border-zinc-200 text-zinc-600 dark:border-zinc-800 dark:text-zinc-300"}`}>{settings.dictationMode ? "듣고 쓰기 종료" : "듣고 쓰기"}</button>
+          <button type="button" onClick={() => updateSettings({ ...settings, showTranslations: !settings.showTranslations })} className={`min-h-11 rounded-xl border px-4 text-xs font-semibold transition ${settings.showTranslations ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300" : "border-zinc-200 text-zinc-600 dark:border-zinc-800 dark:text-zinc-300"}`}>{settings.showTranslations ? "전체 해석 끄기" : "전체 해석 켜기"}</button>
+          <button
+            ref={settingsTriggerRef}
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+            aria-haspopup="dialog"
+            aria-expanded={settingsOpen}
+            aria-controls={settingsDialogId}
+            className="min-h-11 rounded-xl border border-zinc-200 px-4 text-xs font-semibold dark:border-zinc-800"
+          >
+            필사 설정
+          </button>
           {completedCount > 0 && (
-            <button type="button" onClick={() => setSummaryOpen(true)} className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white">결과 보기</button>
+            <button type="button" onClick={() => setSummaryOpen(true)} className="min-h-11 rounded-xl border border-emerald-200 px-4 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/30">결과 보기</button>
           )}
-          <button type="button" onClick={() => setVocabularyOpen(true)} className="rounded-xl border border-zinc-200 px-4 py-2 text-xs font-semibold dark:border-zinc-800">단어장 ({sessionWords.length})</button>
-          <button type="button" onClick={() => setSettings((current) => ({ ...current, dictationMode: !current.dictationMode }))} className={`rounded-xl border px-4 py-2 text-xs font-semibold transition ${settings.dictationMode ? "border-violet-500 bg-violet-50 text-violet-700 dark:bg-violet-950/30 dark:text-violet-300" : "border-zinc-200 text-zinc-600 dark:border-zinc-800 dark:text-zinc-300"}`}>{settings.dictationMode ? "듣고 쓰기 종료" : "듣고 쓰기"}</button>
-          <button type="button" onClick={() => setSettings((current) => ({ ...current, showTranslations: !current.showTranslations }))} className={`rounded-xl border px-4 py-2 text-xs font-semibold transition ${settings.showTranslations ? "border-emerald-500 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300" : "border-zinc-200 text-zinc-600 dark:border-zinc-800 dark:text-zinc-300"}`}>{settings.showTranslations ? "전체 해석 끄기" : "전체 해석 켜기"}</button>
-          <button type="button" onClick={() => setSettingsOpen(true)} className="rounded-xl border border-zinc-200 px-4 py-2 text-xs font-semibold tracking-wider dark:border-zinc-800">필사 설정 ⚙</button>
         </div>
       </div>
 
       <header className="mt-7 border-b border-zinc-200 pb-7 dark:border-zinc-800">
         <p className="text-sm text-emerald-700 dark:text-emerald-400">{article.sourceName}</p>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight sm:text-4xl">{article.title}</h1>
+        <h1 className="mt-2 text-xl font-semibold tracking-tight sm:text-2xl">{article.title}</h1>
         <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-sm text-zinc-500">
           <span>완료 {completedCount} / {sentences.length}문장</span>
           <span>입력 {totalTyped.toLocaleString()}자</span>
@@ -325,69 +392,45 @@ export function PracticeWorkspace({ sessionId }: { sessionId: string }) {
       </header>
 
       <div className="mt-8 space-y-8">
-        {sentences.map((sentence, index) => {
-          const typed = typedBySentence[index] ?? "";
-          const typedCharacters = Array.from(typed);
-          const targetCharacters = Array.from(sentence.text);
-          const states = buildCharacterStates(sentence.text, typed);
-          const complete = isTypingComplete(sentence.text, typed);
-          const accuracy = calculateAccuracy(sentence.text, typed);
-          const hadWrongAttempt = wrongAttemptIndices.has(index);
-          const active = activeIndex === index;
-          const originalVisible = !settings.dictationMode || revealedBySentence[index] || complete;
-
-          return (
-            <section key={`${sentence.text}-${index}`} ref={(element) => { cardRefs.current[index] = element; }} className={`${sentence.paragraphStart && index > 0 ? "mt-16" : ""} rounded-3xl border bg-white p-5 shadow-sm transition dark:bg-zinc-900 sm:p-8 ${active ? "border-emerald-500 ring-4 ring-emerald-500/10" : "border-zinc-200 dark:border-zinc-800"}`}>
-              <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-zinc-500">
-                <span>{index + 1}번째 문장</span>
-                <div className="flex items-center gap-2">
-                  {hadWrongAttempt && <span className="rounded-full bg-amber-100 px-2 py-1 font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">실수 기록</span>}
-                  <button type="button" disabled={!speechSupported} onClick={() => playSentence(index)} className={`rounded-lg border px-3 py-1.5 font-semibold transition disabled:opacity-40 ${speakingIndex === index ? "border-emerald-500 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30" : "border-zinc-200 dark:border-zinc-700"}`}>{speakingIndex === index ? "■ 정지" : "▶ 문장 듣기"}</button>
-                  <span>{complete ? "완료" : typed ? `정확도 ${accuracy}%` : "대기"}</span>
-                </div>
-              </div>
-
-              <div className="mt-5">
-                {originalVisible ? (
-                  <>
-                    <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500">원문 · 단어에 마우스를 올리면 뜻 보기 · 더블클릭하면 복사</p>
-                    <InteractiveSentence sentence={sentence.text} sourceTitle={article.title} style={textStyle} onLookupSuccess={handleLookupSuccess} />
-                    <SentenceTranslation sentence={sentence.text} showAll={settings.showTranslations} />
-                  </>
-                ) : (
-                  <div className="rounded-2xl border border-dashed border-violet-300 bg-violet-50/60 px-5 py-8 text-center dark:border-violet-800 dark:bg-violet-950/20">
-                    <p className="text-sm font-semibold text-violet-700 dark:text-violet-300">원문이 가려져 있습니다. 문장을 듣고 입력해 보세요.</p>
-                    <button type="button" onClick={() => setRevealedBySentence((current) => ({ ...current, [index]: true }))} className="mt-3 text-xs font-semibold text-zinc-500 underline underline-offset-4">원문 잠시 보기</button>
-                  </div>
-                )}
-              </div>
-
-              <div role="textbox" tabIndex={0} onClick={() => activateSentence(index)} onFocus={() => activateSentence(index)} className="relative mt-6 min-h-36 cursor-text rounded-2xl border border-zinc-200 bg-zinc-50 p-5 outline-none dark:border-zinc-700 dark:bg-zinc-950 sm:p-6">
-                <p aria-hidden="true" className="whitespace-pre-wrap break-words" style={textStyle}>
-                  {states.map(({ character, displayCharacter, state }, characterIndex) => (
-                    <span key={`${character}-${characterIndex}`}>
-                      {active && characterIndex === typedCharacters.length && <span className="typing-caret" />}
-                      <span className={state === "correct" ? "text-zinc-950 dark:text-zinc-50" : state === "incorrect" ? "rounded-sm bg-red-100 text-red-600 dark:bg-red-950/60 dark:text-red-400" : "text-zinc-300 dark:text-zinc-700"}>{displayCharacter}</span>
-                    </span>
-                  ))}
-                  {active && typedCharacters.length === targetCharacters.length && <span className="typing-caret" />}
-                  {typedCharacters.length > targetCharacters.length && <span className="rounded-sm bg-red-100 text-red-600 dark:bg-red-950/60 dark:text-red-400">{typedCharacters.slice(targetCharacters.length).join("")}</span>}
-                </p>
-                <textarea ref={(element) => { inputRefs.current[index] = element; }} value={typed} onChange={(event) => updateTyped(index, event.target.value)} onFocus={() => setActiveIndex(index)} onPaste={(event) => event.preventDefault()} spellCheck={false} autoCorrect="off" autoCapitalize="off" aria-label={`${index + 1}번째 문장 입력`} className="absolute inset-0 h-full w-full resize-none opacity-0" />
-              </div>
-
-              <div className="mt-4 flex items-center justify-between gap-3">
-                <p className={`text-sm font-medium ${complete ? "text-emerald-600" : "text-zinc-500"}`}>{complete ? "문장을 정확히 입력했습니다." : "입력한 글자가 다르면 빨간색으로 표시됩니다."}</p>
-                {index < sentences.length - 1 && <button type="button" onClick={() => activateSentence(index + 1, true)} className="shrink-0 rounded-xl border border-zinc-300 px-4 py-2 text-sm font-medium dark:border-zinc-700">다음 문장 ↓</button>}
-              </div>
-            </section>
-          );
-        })}
+        {sentences.map((sentence, index) => (
+          <PracticeSentenceCard
+            key={`${sentence.text}-${index}`}
+            index={index}
+            sentence={sentence}
+            typed={typedBySentence[index] ?? ""}
+            isActive={activeIndex === index}
+            hadWrongAttempt={wrongAttemptIndices.has(index)}
+            isSpeaking={speakingIndex === index}
+            speechSupported={speechSupported}
+            dictationMode={settings.dictationMode}
+            revealed={revealedBySentence[index] ?? false}
+            showTranslations={settings.showTranslations}
+            textStyle={textStyle}
+            sourceTitle={article.title}
+            isLast={index === sentences.length - 1}
+            cardRefs={cardRefs}
+            inputRefs={inputRefs}
+            onActivate={activateSentence}
+            onPlay={playSentence}
+            onTyped={updateTyped}
+            onReveal={revealSentence}
+            onFocusSentence={setActiveIndex}
+            onToggleSaved={handleToggleSaved}
+            practiceSessionId={sessionId}
+          />
+        ))}
       </div>
 
-      <section aria-label="광고" className="mt-12 flex min-h-24 items-center justify-center rounded-2xl border border-dashed border-zinc-300 px-4 text-center text-xs text-zinc-500 dark:border-zinc-700">향후 광고가 표시될 영역입니다.</section>
       <VocabularyDrawer open={vocabularyOpen} sessionWords={sessionWords} savedWords={savedWords} onClose={() => setVocabularyOpen(false)} onToggleSaved={handleToggleSaved} onDeleteSessionWord={handleDeleteSessionWord} onClearSessionWords={() => storeSessionWords([])} onImportCsv={handleImportCsv} />
-      <TypingSettings open={settingsOpen} value={settings} onChange={setSettings} onClose={() => setSettingsOpen(false)} />
+      <TypingSettings
+        open={settingsOpen}
+        dialogId={settingsDialogId}
+        titleId={settingsTitleId}
+        value={settings}
+        onChange={updateSettings}
+        onClose={() => setSettingsOpen(false)}
+        triggerRef={settingsTriggerRef}
+      />
     </main>
   );
 }

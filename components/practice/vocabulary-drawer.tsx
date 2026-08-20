@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { normalizeWord, parseVocabularyCsv, toVocabularyCsv } from "@/lib/vocabulary-storage";
 import type { SavedWord } from "@/types/vocabulary";
@@ -87,7 +88,7 @@ export function VocabularyDrawer({
 
   function handleClear() {
     if (sessionWords.length === 0) return;
-    if (window.confirm("이번 세션에서 확인한 단어를 모두 삭제할까요?")) {
+    if (window.confirm("이번 학습에서 확인한 단어를 모두 삭제할까요?")) {
       onClearSessionWords();
     }
   }
@@ -100,11 +101,19 @@ export function VocabularyDrawer({
       <aside className="absolute right-0 top-0 flex h-full w-full max-w-md flex-col border-l border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
         <header className="flex items-start justify-between gap-4 border-b border-zinc-200 px-5 py-5 dark:border-zinc-800">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-600">Vocabulary</p>
-            <h2 id="vocabulary-title" className="mt-1 text-xl font-semibold">오늘 학습한 단어</h2>
+            <h2 id="vocabulary-title" className="text-xl font-semibold">오늘 학습한 단어</h2>
             <p className="mt-1 text-xs text-zinc-500">확인 {sessionWords.length}개 · 내 단어 {savedWords.length}개</p>
           </div>
-          <button type="button" onClick={onClose} className="rounded-xl border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-800">닫기</button>
+          <div className="flex shrink-0 items-center gap-2">
+            <Link
+              href="/vocabulary"
+              onClick={onClose}
+              className="rounded-xl border border-emerald-200 px-3 py-2 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-50 dark:border-emerald-900 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
+            >
+              전체 단어장 보기
+            </Link>
+            <button type="button" onClick={onClose} className="rounded-xl border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-800">닫기</button>
+          </div>
         </header>
 
         <div className="border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
@@ -120,15 +129,15 @@ export function VocabularyDrawer({
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {filteredWords.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-zinc-300 px-5 py-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
-              {sessionWords.length === 0 ? "단어에 마우스를 올려 뜻을 확인하면 여기에 자동으로 쌓입니다." : "검색 결과가 없습니다."}
+            <div className="rounded-xl border border-dashed border-zinc-300 px-5 py-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
+              {sessionWords.length === 0 ? "★ 별표를 눌러 단어를 저장하면 이곳에 표시됩니다." : "검색 결과가 없습니다."}
             </div>
           ) : (
             <ul className="space-y-3">
               {filteredWords.map((word) => {
                 const saved = isSaved(word, savedWords);
                 return (
-                  <li key={normalizeWord(word.word)} className="rounded-2xl border border-zinc-200 p-4 dark:border-zinc-800">
+                  <li key={normalizeWord(word.word)} className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <strong className="block truncate text-base">{word.word}</strong>
@@ -147,8 +156,8 @@ export function VocabularyDrawer({
                         </button>
                         <button
                           type="button"
-                          aria-label={`${word.word} 세션 단어장에서 삭제`}
-                          title="이번 세션에서 삭제"
+                          aria-label={`${word.word} 오늘 학습한 단어에서 삭제`}
+                          title="이번 학습에서 삭제"
                           onClick={() => onDeleteSessionWord(word)}
                           className="rounded-lg px-2.5 py-2 text-sm text-zinc-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30"
                         >

@@ -28,17 +28,24 @@ export function loadTypingSettings<T>(defaults: T, normalize: (value: unknown) =
   const localStorage = getStorage("localStorage");
   const sessionStorage = getStorage("sessionStorage");
 
-  const candidates = [
-    localStorage?.getItem(TYPING_SETTINGS_KEY) ?? null,
-    ...LEGACY_TYPING_SETTINGS_KEYS.map((key) => localStorage?.getItem(key) ?? null),
-    ...LEGACY_TYPING_SETTINGS_KEYS.map((key) => sessionStorage?.getItem(key) ?? null),
+  const candidates: Array<{ raw: string | null; legacySessionKey?: string }> = [
+    { raw: localStorage?.getItem(TYPING_SETTINGS_KEY) ?? null },
+    ...LEGACY_TYPING_SETTINGS_KEYS.map((key) => ({ raw: localStorage?.getItem(key) ?? null })),
+    ...LEGACY_TYPING_SETTINGS_KEYS.map((key) => ({ raw: sessionStorage?.getItem(key) ?? null, legacySessionKey: key })),
   ];
 
-  for (const raw of candidates) {
-    if (!raw) continue;
+  for (const candidate of candidates) {
+    if (!candidate.raw) continue;
     try {
-      const normalized = normalize(JSON.parse(raw));
+      const normalized = normalize(JSON.parse(candidate.raw));
       saveTypingSettings(normalized);
+      if (candidate.legacySessionKey) {
+        try {
+          sessionStorage?.removeItem(candidate.legacySessionKey);
+        } catch {
+          // The migrated value is already saved; cleanup failure is harmless.
+        }
+      }
       return normalized;
     } catch {
       continue;

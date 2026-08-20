@@ -1,36 +1,17 @@
 "use client";
 
-import type { SpeechLocale } from "@/hooks/use-speech-synthesis";
-
-export type TypingSettingsValue = {
-  fontSize: number;
-  fontWeight: number;
-  fontFamily: "sans" | "serif";
-  lineHeight: number;
-  showTranslations: boolean;
-  speechLocale: SpeechLocale;
-  speechRate: number;
-  dictationMode: boolean;
-  autoPlayNext: boolean;
-};
-
-export const DEFAULT_TYPING_SETTINGS: TypingSettingsValue = {
-  fontSize: 26,
-  fontWeight: 500,
-  fontFamily: "sans",
-  lineHeight: 1.7,
-  showTranslations: false,
-  speechLocale: "en-US",
-  speechRate: 1,
-  dictationMode: false,
-  autoPlayNext: false,
-};
+import { useEffect, useRef } from "react";
+import { DEFAULT_TYPING_SETTINGS, type TypingSettingsValue } from "@/lib/typing-settings";
+import { getFocusableEdges } from "@/lib/focus-trap";
 
 type Props = {
   open: boolean;
+  dialogId: string;
+  titleId: string;
   value: TypingSettingsValue;
   onChange: (value: TypingSettingsValue) => void;
   onClose: () => void;
+  triggerRef: React.RefObject<HTMLButtonElement | null>;
 };
 
 function Stepper({ label, value, min, max, step, onChange }: { label: string; value: number; min: number; max: number; step: number; onChange: (value: number) => void }) {
@@ -59,19 +40,111 @@ function Toggle({ label, description, checked, onClick }: { label: string; descr
   );
 }
 
-export function TypingSettings({ open, value, onChange, onClose }: Props) {
+export function TypingSettings({ open, dialogId, titleId, value, onChange, onClose, triggerRef }: Props) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  // ── open 시 초기 focus + backdrop body scroll lock ──
+  useEffect(() => {
+    if (!open) return;
+
+    // body scroll lock
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    // 초기 focus: 닫기 버튼
+    const closeBtn = closeButtonRef.current;
+    if (closeBtn) {
+      window.requestAnimationFrame(() => closeBtn.focus());
+    }
+
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [open]);
+
+  // ── Escape ──
+  useEffect(() => {
+    if (!open) return;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        onClose();
+        triggerRef.current?.focus();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [open, onClose, triggerRef]);
+
+  // ── focus trap ──
+  useEffect(() => {
+    if (!open) return;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Tab") return;
+
+      const { first, last } = getFocusableEdges(dialogRef.current);
+      if (!first || !last) return;
+
+      if (event.shiftKey) {
+        if (document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        }
+      } else if (document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [open]);
+
+  // ── backdrop click ──
+  function handleBackdropClick(event: React.MouseEvent) {
+    if (event.target === event.currentTarget) {
+      onClose();
+      triggerRef.current?.focus();
+    }
+  }
+
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/20" onMouseDown={(event) => event.currentTarget === event.target && onClose()}>
-      <aside className="h-full w-full max-w-sm overflow-y-auto bg-white p-6 shadow-2xl dark:bg-zinc-950">
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/20" onMouseDown={handleBackdropClick}>
+      <div
+        ref={dialogRef}
+        id={dialogId}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="h-full w-full max-w-sm overflow-y-auto bg-white p-6 shadow-2xl dark:bg-zinc-950"
+      >
         <div className="flex items-center justify-between">
-          <button type="button" onClick={onClose} aria-label="설정 닫기" className="rounded-lg border border-zinc-200 px-3 py-2 text-lg dark:border-zinc-800">×</button>
+          <button
+            ref={closeButtonRef}
+            type="button"
+            onClick={() => {
+              onClose();
+              triggerRef.current?.focus();
+            }}
+            aria-label="필사 설정 닫기"
+            className="rounded-lg border border-zinc-200 px-3 py-2 text-lg dark:border-zinc-800"
+          >
+            ×
+          </button>
           <button type="button" onClick={() => onChange(DEFAULT_TYPING_SETTINGS)} className="text-xs font-semibold tracking-wider">초기화</button>
         </div>
-        <h2 className="mt-10 text-lg font-semibold">필사 설정</h2>
+        <h2 id={titleId} className="mt-6 text-lg font-semibold">필사 설정</h2>
 
-        <div className="mt-7 divide-y divide-zinc-200 border-y border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
+        <div className="mt-5">
+          <p className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">학습 방식</p>
+        </div>
+        <div className="mt-2 divide-y divide-zinc-200 border-y border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
           <Toggle label="전체 문장 해석 보기" description="모든 문장 카드에서 한국어 해석을 표시합니다." checked={value.showTranslations} onClick={() => onChange({ ...value, showTranslations: !value.showTranslations })} />
           <Toggle label="듣고 쓰기 모드" description="영어 원문을 가리고 음성만 들으며 입력합니다." checked={value.dictationMode} onClick={() => onChange({ ...value, dictationMode: !value.dictationMode })} />
           <Toggle label="다음 문장 자동 재생" description="문장을 정확히 입력하면 다음 문장을 자동으로 읽습니다." checked={value.autoPlayNext} onClick={() => onChange({ ...value, autoPlayNext: !value.autoPlayNext })} />
@@ -112,7 +185,7 @@ export function TypingSettings({ open, value, onChange, onClose }: Props) {
         </div>
 
         <p className="mt-6 text-xs leading-5 text-zinc-500">TTS는 브라우저와 운영체제에 설치된 무료 영어 음성을 사용합니다. 기기마다 음성 종류와 품질이 다를 수 있습니다.</p>
-      </aside>
+      </div>
     </div>
   );
 }

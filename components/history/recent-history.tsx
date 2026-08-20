@@ -16,7 +16,7 @@ export function RecentHistory({ entries }: RecentHistoryProps) {
   const recentEntries = entries.slice(0, 3);
 
   return (
-    <section className="mt-8 rounded-3xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:p-6">
+    <section className="mt-8 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900 sm:p-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">최근 학습</p>
@@ -30,7 +30,7 @@ export function RecentHistory({ entries }: RecentHistoryProps) {
       </div>
 
       {recentEntries.length === 0 ? (
-        <div className="mt-6 rounded-2xl bg-zinc-50 px-4 py-6 dark:bg-zinc-950 sm:px-5">
+        <div className="mt-6 rounded-xl bg-zinc-50 px-4 py-6 dark:bg-zinc-950 sm:px-5">
           <p className="text-sm leading-6 text-zinc-500">아직 완료한 필사가 없습니다. 첫 글을 끝내면 학습 기록이 여기에 쌓입니다.</p>
           <a href="#practice-start" className="mt-4 inline-flex min-h-11 items-center rounded-xl bg-zinc-950 px-4 text-sm font-semibold text-white dark:bg-zinc-100 dark:text-zinc-950">
             첫 필사 시작하기
