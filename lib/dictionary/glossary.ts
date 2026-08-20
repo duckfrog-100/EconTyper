@@ -1,0 +1,137 @@
+import type { GlossaryEntry } from "@/types/dictionary";
+
+export const glossary: GlossaryEntry[] = [
+  {
+    term: "bond",
+    koreanMeaning: "채권",
+    partOfSpeech: "noun",
+    domain: "finance",
+  },
+  {
+    term: "bond yield",
+    koreanMeaning: "채권 수익률",
+    partOfSpeech: "noun",
+    domain: "finance",
+  },
+  {
+    term: "interest rate",
+    koreanMeaning: "금리",
+    partOfSpeech: "noun",
+    domain: "finance",
+  },
+  {
+    term: "capital market",
+    koreanMeaning: "자본시장",
+    partOfSpeech: "noun",
+    domain: "finance",
+  },
+  {
+    term: "central bank",
+    koreanMeaning: "중앙은행",
+    partOfSpeech: "noun",
+    domain: "economy",
+  },
+  {
+    term: "monetary policy",
+    koreanMeaning: "통화 정책",
+    partOfSpeech: "noun",
+    domain: "economy",
+  },
+  {
+    term: "fiscal policy",
+    koreanMeaning: "재정 정책",
+    partOfSpeech: "noun",
+    domain: "economy",
+  },
+  {
+    term: "inflation",
+    koreanMeaning: "인플레이션, 물가 상승",
+    partOfSpeech: "noun",
+    domain: "economy",
+  },
+  {
+    term: "deflation",
+    koreanMeaning: "디플레이션, 물가 하락",
+    partOfSpeech: "noun",
+    domain: "economy",
+  },
+  {
+    term: "exchange rate",
+    koreanMeaning: "환율",
+    partOfSpeech: "noun",
+    domain: "finance",
+  },
+  {
+    term: "labor market",
+    koreanMeaning: "노동 시장",
+    partOfSpeech: "noun",
+    domain: "economy",
+  },
+  {
+    term: "gross domestic product",
+    koreanMeaning: "국내총생산(GDP)",
+    partOfSpeech: "noun",
+    domain: "economy",
+    aliases: ["GDP"],
+  },
+  {
+    term: "recession",
+    koreanMeaning: "경기 침체",
+    partOfSpeech: "noun",
+    domain: "economy",
+  },
+  {
+    term: "equity",
+    koreanMeaning: "주식, 자기 자본",
+    partOfSpeech: "noun",
+    domain: "finance",
+  },
+  {
+    term: "stock",
+    koreanMeaning: "주식",
+    partOfSpeech: "noun",
+    domain: "finance",
+  },
+  {
+    term: "share",
+    koreanMeaning: "주식, 주",
+    partOfSpeech: "noun",
+    domain: "finance",
+  },
+  {
+    term: "yield",
+    koreanMeaning: "수익률",
+    partOfSpeech: "noun",
+    domain: "finance",
+  },
+  {
+    term: "default",
+    koreanMeaning: "채무 불이행, 디폴트",
+    partOfSpeech: "noun",
+    domain: "finance",
+  },
+  {
+    term: "liquidity",
+    koreanMeaning: "유동성",
+    partOfSpeech: "noun",
+    domain: "finance",
+  },
+  {
+    term: "revenue",
+    koreanMeaning: "수익, 매출",
+    partOfSpeech: "noun",
+    domain: "business",
+  },
+  {
+    term: "profit",
+    koreanMeaning: "이익, 수익",
+    partOfSpeech: "noun",
+    domain: "business",
+  },
+  {
+    term: "earnings",
+    koreanMeaning: "수익, 순이익",
+    partOfSpeech: "noun",
+    domain: "business",
+  },
+];
